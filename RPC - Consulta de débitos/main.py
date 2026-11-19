@@ -463,6 +463,36 @@ def _formatar_documento(documento: str) -> str:
     return documento.strip()
 
 
+def _aplicar_tipo_pesquisa(pagina) -> str:
+    """Escolhe 'Competência' no select 'Pesquisar por' do site, se existir."""
+    try:
+        for select in pagina.query_selector_all("select"):
+            opcoes = []
+            for opt in select.query_selector_all("option"):
+                texto = (opt.inner_text() or "").strip()
+                valor = opt.get_attribute("value") or ""
+                opcoes.append((texto, valor))
+            normal = lambda s: _sem_acento(s).strip().lower()
+            textos = " ".join(normal(t) for t, _ in opcoes)
+            if "competencia" not in textos or "vencimento" not in textos:
+                continue
+            for texto, valor in opcoes:
+                if "competencia" not in normal(texto):
+                    continue
+                try:
+                    select.select_option(label=texto)
+                except Exception:  # noqa: BLE001
+                    try:
+                        select.select_option(value=valor)
+                    except Exception:  # noqa: BLE001
+                        return ""
+                pagina.wait_for_timeout(800)
+                return "competencia"
+    except Exception:  # noqa: BLE001
+        pass
+    return ""
+
+
 def _aplicar_periodo(pagina) -> None:
     """Amplia o filtro de período para os últimos 10 anos.
 
@@ -583,6 +613,7 @@ def consultar_debito(
     from playwright.sync_api import sync_playwright
 
     _limpar_loop_asyncio()
+    tipo_pesquisa = ""
 
     # Preferir a sessão real do Brave (via CDP): é onde o "Pesquisar" funciona.
     usar_cdp = False
@@ -672,6 +703,10 @@ def consultar_debito(
             campo.press("Tab")
             pagina.wait_for_timeout(900)
 
+            # Se houver "Pesquisar por: competência/lançamento/vencimento",
+            # escolhe competência antes de ajustar o período.
+            tipo_pesquisa = _aplicar_tipo_pesquisa(pagina)
+
             # Consultar sempre os últimos 10 anos de competência (após o CPF,
             # para o AJAX do período não re-renderizar o campo com máscara).
             _aplicar_periodo(pagina)
@@ -727,6 +762,8 @@ def consultar_debito(
                 )
             else:
                 debitos = _extrair_tabelas(pagina)
+                for debito in debitos:
+                    debito["_pesquisa_por"] = tipo_pesquisa
                 if not debitos:
                     raise ConsultaNaoVerificada(
                         "A tabela de resultados tem linhas, mas não foi possível ler os débitos."
@@ -880,7 +917,11 @@ class ConsultaWorker(QThread):
                             "Tipo de Débito": _tipo_debito_com_migracao(
                                 debito["tipo_debito"], registro
                             ),
-                            "Competência": competencia_original or debito["competencia"],
+                            "Competência": (
+                                debito["competencia"]
+                                if debito.get("_pesquisa_por") == "competencia"
+                                else (competencia_original or debito["competencia"])
+                            ),
                             "_competencia_site": debito["competencia"],
                             "Valor (R$)": f"{debito['valor']:.2f}".replace(".", ","),
                             "Status": "VERIFICADO", "Erro": "",

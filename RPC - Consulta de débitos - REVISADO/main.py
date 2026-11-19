@@ -800,6 +800,41 @@ def _tipo_e_campo_documento(documento: str, tipo: str = "") -> tuple[str, str]:
     )
 
 
+def _aplicar_tipo_pesquisa(pagina) -> str:
+    """Escolhe 'Competência' no select 'Pesquisar por' do site, se existir.
+
+    Quando a tela permite pesquisar por competência, lançamento ou vencimento,
+    escolher competência faz o relatório trazer o período original do débito,
+    em vez da referência da cobrança atual. Retorna "competencia" se aplicou.
+    """
+    try:
+        for select in pagina.query_selector_all("select"):
+            opcoes = []
+            for opt in select.query_selector_all("option"):
+                texto = (opt.inner_text() or "").strip()
+                valor = opt.get_attribute("value") or ""
+                opcoes.append((texto, valor))
+            normal = lambda s: _sem_acento(s).strip().lower()
+            textos = " ".join(normal(t) for t, _ in opcoes)
+            if "competencia" not in textos or "vencimento" not in textos:
+                continue
+            for texto, valor in opcoes:
+                if "competencia" not in normal(texto):
+                    continue
+                try:
+                    select.select_option(label=texto)
+                except Exception:  # noqa: BLE001
+                    try:
+                        select.select_option(value=valor)
+                    except Exception:  # noqa: BLE001
+                        return ""
+                pagina.wait_for_timeout(800)
+                return "competencia"
+    except Exception:  # noqa: BLE001
+        pass
+    return ""
+
+
 def _aplicar_periodo(pagina) -> None:
     """Amplia o filtro de período para os últimos 10 anos.
 
@@ -1083,6 +1118,7 @@ def consultar_debito(
     verificar_parada()
     debitos: list[dict] = []
     erro_site_msg: str | None = None
+    tipo_pesquisa = ""
 
     # Preferir a sessão real do Brave (via CDP): é onde o "Pesquisar" funciona.
     usar_cdp = False
@@ -1195,6 +1231,11 @@ def consultar_debito(
                 verificar_parada()
                 verificar_erro_site()
 
+                # Se o site tiver "Pesquisar por: competência/lançamento/
+                # vencimento", escolhe competência antes de ajustar o período.
+                tipo_pesquisa = _aplicar_tipo_pesquisa(pagina)
+                verificar_erro_site()
+
                 # Consultar sempre os últimos 10 anos de competência (após o CPF,
                 # para o AJAX do período não re-renderizar o campo com máscara).
                 _aplicar_periodo(pagina)
@@ -1300,6 +1341,8 @@ def consultar_debito(
                 # digitado e conferido antes do clique. Aceita os débitos mesmo
                 # que não tenha sido possível reler o campo depois do AJAX.
                 debitos: list[dict] = _extrair_tabelas(pagina)
+                for debito in debitos:
+                    debito["_pesquisa_por"] = tipo_pesquisa
                 # Linhas existiam, mas nenhuma era DÉBITO (o site pode ter
                 # trazido só dívida ativa/ajuizado): sem débitos confirmado.
             elif tem_tabela:
@@ -1553,6 +1596,19 @@ class ConsultaWorker(QThread):
                                 deve_parar=self.parar_solicitado,
                                 sem_confirmacao=sem_confirmacao,
                             )
+                            if (
+                                debitos
+                                and any(
+                                    d.get("_pesquisa_por") == "competencia"
+                                    for d in debitos
+                                )
+                                and not getattr(self, "_filtro_comp_logado", False)
+                            ):
+                                self._filtro_comp_logado = True
+                                self.aviso.emit(
+                                    "Filtro do site 'Pesquisar por: Competência' "
+                                    "aplicado — competência original dos débitos."
+                                )
                             break
                         except ConsultaNaoVerificada as exc:
                             mensagem = str(exc).lower()
@@ -1600,7 +1656,11 @@ class ConsultaWorker(QThread):
                             "Tipo de Débito": _tipo_debito_com_migracao(
                                 debito["tipo_debito"], registro
                             ),
-                            "Competência": competencia_original or debito["competencia"],
+                            "Competência": (
+                                debito["competencia"]
+                                if debito.get("_pesquisa_por") == "competencia"
+                                else (competencia_original or debito["competencia"])
+                            ),
                             "_competencia_site": debito["competencia"],
                             "Valor (R$)": f"{debito['valor']:.2f}".replace(".", ","),
                             "Status": "VERIFICADO", "Erro": "",
