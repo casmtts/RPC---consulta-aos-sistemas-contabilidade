@@ -53,8 +53,8 @@ consultar situação cadastral de CNPJ ( BrasilAPI / ReceitaWS ), em GUI e termi
 ## O que o programa faz
 
 1. Lê uma planilha (`.xlsx`, `.xlsm` ou `.csv`) com CPFs, CNPJs ou CIFs.
-2. Abre o sistema de débitos usando a **sessão já logada no Brave** (via CDP,
-   porta `9222`) ou um Chromium invisível com os cookies do Brave.
+2. Abre o sistema de débitos usando a **sessão já logada no navegador (Brave, Chrome, Edge, Vivaldi ou Chromium)** (via CDP,
+   porta `9222`) ou um Chromium invisível com os cookies do navegador.
 3. Consulta cada devedor, aplicando o filtro de situação **somente DÉBITO**
    (dívida ativa, ajuizado, pago, cancelado e prescrito ficam de fora).
 4. Grava os resultados em uma tabela agrupada por devedor (cores alternadas)
@@ -69,11 +69,11 @@ exemplo, qual imóvel (CIF) está devendo IPTU.
 
 ## Requisitos
 
-- **macOS** (o leitor de cookies do Brave usa Keychain + banco de cookies do Chromium).
+- **macOS** (o leitor de cookies usa Keychain + banco de cookies do Chromium).
 - **Python 3.10+** (3.9 na versão x86).
 - Dependências: `PyQt6`, `playwright`, `openpyxl`, `cryptography`
   (ver `requirements.txt` / `requirements-x86.txt`).
-- **Brave** com o sistema aberto e logado (ou Chromium headless com os cookies).
+- **Brave, Chrome, Edge, Vivaldi ou Chromium** com o sistema aberto e logado — o programa detecta qual está logado.
 - Chromium do Playwright (instalado pelo próprio programa).
 
 ---
@@ -111,8 +111,8 @@ O instalador cria `.venv-x86/` e instala browsers em
 ## Fluxo de uso
 
 1. Aba **Ambiente** → **Instalar tudo** (primeira vez) e
-   **Abrir Brave com depuração (9222)**.
-2. No Brave, entre no sistema normalmente e **deixe a aba logada**.
+   **Abrir navegador com depuração (9222)**.
+2. No navegador, entre no sistema normalmente e **deixe a aba logada**.
 3. Volte ao programa → aba **Ambiente** → **Atualizar cookies**.
 4. Aba **Consulta** → **Escolher planilha...** → confira a aba → **Executar**.
 5. Acompanhe a barra de progresso e a aba **Log**.
@@ -205,7 +205,7 @@ Descrições especiais em `Tipo de Débito`:
   são **excluídos da consulta principal** — o worker principal os ignora —,
   então cada rotina atua num conjunto distinto de CPFs e nunca consulta o
   mesmo documento ao mesmo tempo. **Importante:** os dois workers usam o
-  mesmo `JSESSIONID` do Brave; se consultassem o site simultaneamente, a sessão
+  mesmo `JSESSIONID` do navegador; se consultassem o site simultaneamente, a sessão
   JSF trocaria o contribuinte selecionado e um veria o documento do outro
   (erros “o site está com o documento X, mas foi pedido Y”). Por isso o acesso
   ao site é **serializado por um lock**: as duas rotinas andam no mesmo
@@ -223,31 +223,31 @@ Descrições especiais em `Tipo de Débito`:
 ## Sessão, cookies e token de autenticação
 
 O programa **não armazena senhas nem cookies em arquivo**. Ele lê, somente em
-memória, os dois cookies do sistema no perfil do Brave:
+memória, os dois cookies do sistema no perfil do navegador detectado:
 
 - `__Secure-DA` — JWT de autenticação;
 - `JSESSIONID` — sessão JSF (perfil selecionado no servidor).
 
 Renovação automática:
 
-- Se falta **menos de 1 minuto** para o JWT expirar, o token é relido do Brave
+- Se falta **menos de 1 minuto** para o JWT expirar, o token é relido do navegador
   antes da próxima consulta — **sem interromper o trabalho**.
 - Se uma consulta falha por **token/sessão expirado** (404, página de erro
   `13429`, "Sessão expirada", erro de autenticação), o programa pega o token
-  novo do Brave e **refaz aquela consulta** (até 3 tentativas).
+  novo do navegador e **refaz aquela consulta** (até 3 tentativas).
 - Se todas as tentativas falharem, o item fica `NAO VERIFICADO` e entra no
-  Revisar; o log orienta a entrar no sistema novamente no Brave.
+  Revisar; o log orienta a entrar no sistema novamente no navegador.
 
 > O programa não tem credenciais para fazer login sozinho. Manter a aba do
-> sistema aberta e logada no Brave é o que permite a renovação do token.
+> sistema aberta e logada no navegador é o que permite a renovação do token.
 
 ---
 
 ## Modo com e sem navegador
 
-- **Padrão (com navegador):** Playwright. Se o Brave estiver com CDP ativo
+- **Padrão (com navegador):** Playwright. Se o navegador estiver com CDP ativo
   (porta 9222), o programa usa uma aba dele; caso contrário, abre um Chromium
-  invisível com os cookies do Brave. É o modo mais confiável — o site é
+  invisível com os cookies do navegador. É o modo mais confiável — o site é
   JSF/PrimeFaces e exige JavaScript.
 - **"Tentar SEM navegador (HTTP direto)":** experimental (`consulta_http.py`).
   Reenvia o formulário com `javax.faces.ViewState` e lê a tabela da resposta.
@@ -265,7 +265,7 @@ Erros conhecidos tratados com retry: **HTTP 404** e **página de erro
   salva. Tema escuro: preto, detalhes laranja e letras brancas.
 - **ESC 2x** — parar consultas (1º aperto faz o botão **Parar** piscar em
   laranja/vermelho; 2º executa a parada).
-- **Ambiente → Atualizar cookies** — relê manualmente JWT e JSESSIONID do Brave.
+- **Ambiente → Atualizar cookies** — relê manualmente JWT e JSESSIONID do navegador.
 
 ---
 
@@ -275,7 +275,7 @@ Erros conhecidos tratados com retry: **HTTP 404** e **página de erro
 RPC - Consulta de débitos - REVISADO/
 ├── main.py              # GUI (PyQt6), planilhas, worker e instalação
 ├── config.py            # URLs, porta CDP, cookie e pausa entre consultas
-├── brave_cookie.py      # leitura segura dos cookies do Brave + validade do JWT
+├── brave_cookie.py      # leitura segura dos cookies do navegador + validade do JWT
 ├── consulta_http.py     # modo experimental sem navegador
 ├── requirements.txt     # dependências
 ├── GUIDE_DE_USO.txt     # guia rápido
@@ -295,15 +295,15 @@ scripts de análise.
 | Sintoma | O que fazer |
 |---------|-------------|
 | `bad CPU type` | Você está na arquitetura errada: use REVISADO (Apple Silicon) ou X86 (Intel). |
-| "Cookie não encontrado no Brave" | Abra o sistema no Brave, faça login e clique em **Atualizar cookies**. |
+| "Cookie não encontrado" | Abra o sistema no navegador, faça login e clique em **Atualizar cookies**. |
 | `NAO VERIFICADO ... status 404` | Sessão/viewstate expirada: o programa já tenta 3x com token novo; se persistir, entre no sistema novamente e use **Revisar**. |
 | `página de erro (código 13429/13414)` | Mesmo tratamento acima: token renovado e consulta refeita automaticamente. |
-| `Botão 'Pesquisar' não encontrado` | O programa abre sessão nova e repete a consulta (até 3x). Se persistir, confira se a aba do sistema está logada no Brave. |
+| `Botão 'Pesquisar' não encontrado` | O programa abre sessão nova e repete a consulta (até 3x). Se persistir, confira se a aba do sistema está logada no navegador. |
 | `O site está com o documento X, mas foi pedido Y` | O site re-renderizou o campo e restaurou um CPF anterior. O programa redigita o documento e confirma o valor antes de pesquisar; se ainda divergir, descarta o resultado (nunca aceita um débito de outro CPF). |
 | `Page.goto: net::ERR_ABORTED` | Navegação abortada também dispara nova tentativa com sessão nova. |
 | "Playwright Sync API inside the asyncio loop" | Corrigido: cada sessão roda em thread limpa. |
 | macOS não abre o `.app` | Botão direito → Abrir → Abrir (app assinado localmente, sem certificado Apple). |
-| Brave não inicia com depuração | Aba **Ambiente** → **Abrir Brave com depuração (9222)**. |
+| Navegador não inicia com depuração | Aba **Ambiente** → **Abrir navegador com depuração (9222)**. |
 
 Logs: `~/Library/Logs/ConsultaDebitos.log` (REVISADO) e
 `~/Library/Logs/ConsultaDebitos-x86.log` (X86).
@@ -314,7 +314,7 @@ Logs: `~/Library/Logs/ConsultaDebitos.log` (REVISADO) e
 
 - Nenhuma cópia do banco de cookies é gravada em disco (abertura somente-leitura).
 - A consulta SQL filtra por **nomes e host exatos** — nenhum outro cookie é lido.
-- A chave do Keychain ("Brave Safe Storage") fica apenas em memória.
+- A chave do Keychain de cada navegador (ex.: "Brave Safe Storage", "Chrome Safe Storage") fica apenas em memória.
 - Tokens e cookies nunca são enviados a terceiros.
 - Planilhas, CSVs e relatórios com dados de devedores **não** entram neste
   repositório.

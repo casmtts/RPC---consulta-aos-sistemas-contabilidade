@@ -48,6 +48,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from config import BASE_URL, HOME_URL, COOKIE_NAME, EXTRACTION_DELAY, CDP_URL
 from models import PLANILLA_CABECALOS
+import brave_cookie
 from brave_cookie import (
     buscar_cookies_no_brave,
     segundos_para_expirar,
@@ -633,12 +634,12 @@ def _aviso_expiracao(cookie: str) -> str | None:
         return None
     if restante <= 0:
         return (
-            "Token de autenticação do Brave VENCIDO — entre no sistema "
+            "Token de autenticação VENCIDO — entre no sistema "
             "novamente no navegador."
         )
     if restante <= MARGEM_RENOVACAO_TOKEN:
         return (
-            f"Token do Brave expira em ~{max(1, restante // 60)} min — "
+            f"Token de autenticação expira em ~{max(1, restante // 60)} min — "
             "mantenha a sessão ativa no navegador."
         )
     return None
@@ -1265,9 +1266,9 @@ class MainWindow(QMainWindow):
         sessao_layout = QHBoxLayout(grupo_sessao)
         sessao_layout.addWidget(QLabel(f"Cookie ({COOKIE_NAME}):"))
         self.campo_cookie = QLineEdit()
-        self.campo_cookie.setPlaceholderText("Cookie preenchido automaticamente do Brave")
+        self.campo_cookie.setPlaceholderText("Cookie preenchido automaticamente do navegador")
         sessao_layout.addWidget(self.campo_cookie)
-        self.botao_cookie_brave = QPushButton("Buscar no Brave")
+        self.botao_cookie_brave = QPushButton("Buscar no navegador")
         self.botao_cookie_brave.clicked.connect(self._carregar_cookie_brave)
         sessao_layout.addWidget(self.botao_cookie_brave)
         consulta_layout.addWidget(grupo_sessao)
@@ -1358,19 +1359,20 @@ class MainWindow(QMainWindow):
             cookies = buscar_cookies_no_brave()
         except Exception as exc:  # noqa: BLE001
             if not silent:
-                QMessageBox.warning(self, "Cookie do Brave", str(exc))
-            self._log(f"Não foi possível ler os cookies do Brave: {exc}")
+                QMessageBox.warning(self, "Cookie do navegador", str(exc))
+            self._log(f"Não foi possível ler os cookies do navegador: {exc}")
             return
         self.campo_cookie.setText(cookies["__Secure-DA"])
         self.cookie_sessao = cookies["JSESSIONID"]
-        self._log("Cookies de sessão obtidos do Brave (JWT + JSESSIONID).")
+        navegador = brave_cookie.ULTIMO_NAVEGADOR or "navegador Chromium"
+        self._log(f"Cookies de sessão obtidos do {navegador} (JWT + JSESSIONID).")
         aviso = _aviso_expiracao(cookies["__Secure-DA"])
         if aviso:
             self._log(f"ATENÇÃO: {aviso}")
             if not silent:
                 self.statusBar().showMessage(aviso)
         if not silent and not aviso:
-            self.statusBar().showMessage("Cookies do Brave atualizados.")
+            self.statusBar().showMessage("Cookies do navegador atualizados.")
 
     def _renovar_token_periodicamente(self) -> None:
         """Relê o token do Brave periodicamente e avisa antes de expirar."""
@@ -1381,7 +1383,7 @@ class MainWindow(QMainWindow):
         if cookie != cookie_atual or sessao != self.cookie_sessao:
             self.campo_cookie.setText(cookie)
             self.cookie_sessao = sessao
-            self._log("Token de autenticação renovado automaticamente do Brave.")
+            self._log("Token de autenticação renovado automaticamente do navegador.")
         aviso = _aviso_expiracao(cookie)
         if aviso:
             self._log(f"ATENÇÃO: {aviso}")

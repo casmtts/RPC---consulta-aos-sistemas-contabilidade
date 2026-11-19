@@ -52,6 +52,7 @@ from PyQt6.QtWidgets import (
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from config import BASE_URL, HOME_URL, COOKIE_NAME, EXTRACTION_DELAY, CDP_URL
+import brave_cookie
 from brave_cookie import (
     buscar_cookies_no_brave,
     segundos_para_expirar,
@@ -1139,12 +1140,12 @@ def _aviso_expiracao(cookie: str) -> str | None:
         return None
     if restante <= 0:
         return (
-            "Token de autenticação do Brave VENCIDO — entre no sistema "
+            "Token de autenticação VENCIDO — entre no sistema "
             "novamente no navegador."
         )
     if restante <= MARGEM_RENOVACAO_TOKEN:
         return (
-            f"Token do Brave expira em ~{max(1, restante // 60)} min — "
+            f"Token de autenticação expira em ~{max(1, restante // 60)} min — "
             "mantenha a sessão ativa no navegador."
         )
     return None
@@ -1257,7 +1258,7 @@ def consultar_debito(
                 if codigo:
                     raise ErroSiteNaoVerificada(
                         f"O site redirecionou para a página de erro "
-                        f"(código {codigo}). Atualize os cookies do Brave e "
+                        f"(código {codigo}). Atualize os cookies do navegador e "
                         "tente novamente."
                     )
 
@@ -1470,7 +1471,7 @@ def consultar_debito(
                     except Exception:  # noqa: BLE001
                         pass
                 raise ConsultaNaoVerificada(
-                    "Sessão expirada no Brave. Entre no sistema no navegador e "
+                    "Sessão expirada no navegador. Entre no sistema novamente e "
                     "use a aba Ambiente → Atualizar cookies."
                 )
             else:
@@ -1517,7 +1518,7 @@ def consultar_debito(
             except Exception:  # noqa: BLE001
                 pass
         raise ErroSiteNaoVerificada(
-            f"{erro_site_msg} Se persistir, entre no sistema no Brave e "
+            f"{erro_site_msg} Se persistir, entre no sistema novamente e "
             "depois clique em Revisar para reconquistar este item."
         )
 
@@ -1871,7 +1872,7 @@ class ComandoWorker(QThread):
 
 
 class BraveWorker(QThread):
-    """Abre o Brave com depuração remota (CDP) para reaproveitar a sessão."""
+    """Abre um navegador Chromium com depuração (CDP) para reusar a sessão."""
 
     saida = pyqtSignal(str)
     finalizado = pyqtSignal(bool, str)
@@ -1882,56 +1883,71 @@ class BraveWorker(QThread):
 
     @staticmethod
     def _caminho_brave() -> str | None:
-        candidatos = [
-            str(
-                Path.home()
-                / "Applications/Brave Browser.app/Contents/MacOS/Brave Browser"
-            ),
-            "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser",
-        ]
+        """Localiza qualquer navegador Chromium instalado."""
+        apps = (
+            "Brave Browser",
+            "Google Chrome",
+            "Microsoft Edge",
+            "Vivaldi",
+            "Chromium",
+        )
+        candidatos: list[str] = []
+        for app in apps:
+            candidatos.extend((
+                str(Path.home() / f"Applications/{app}.app/Contents/MacOS/{app}"),
+                f"/Applications/{app}.app/Contents/MacOS/{app}",
+            ))
         for candidato in candidatos:
             if Path(candidato).exists():
                 return candidato
-        for nome in ("brave-browser", "brave", "Brave Browser"):
+        for nome in ("brave-browser", "brave", "google-chrome", "chrome",
+                     "microsoft-edge", "vivaldi", "chromium", "chromium-browser"):
             encontrado = shutil.which(nome)
             if encontrado:
                 return encontrado
         return None
 
+    @staticmethod
+    def _nome_app(binario: str) -> str:
+        """Nome do app (para fechar via osascript) a partir do executável."""
+        return Path(binario).name
+
     def run(self) -> None:
         if _cdp_ativo():
             self.finalizado.emit(
-                True, "Brave já está com a depuração ativa na porta 9222."
+                True, "Navegador já está com a depuração ativa na porta 9222."
             )
             return
 
+        binario = self._caminho_brave()
+        if not binario:
+            self.finalizado.emit(
+                False,
+                "Nenhum navegador Chromium encontrado (Brave, Chrome, Edge, "
+                "Vivaldi ou Chromium). Instale um deles em /Applications.",
+            )
+            return
+        nome_app = self._nome_app(binario)
+
         if self.fechar:
-            self.saida.emit("Fechando o Brave para reabri-lo com depuração...")
+            self.saida.emit(f"Fechando {nome_app} para reabri-lo com depuração...")
             try:
                 if sys.platform == "darwin":
                     subprocess.run(
-                        ["osascript", "-e", 'tell application "Brave Browser" to quit'],
+                        ["osascript", "-e", f'tell application "{nome_app}" to quit'],
                         capture_output=True, text=True, timeout=15,
                     )
                 else:
                     subprocess.run(
-                        ["pkill", "-x", "Brave Browser"],
+                        ["pkill", "-x", nome_app],
                         capture_output=True, timeout=10,
                     )
             except Exception as exc:  # noqa: BLE001
                 self.saida.emit(f" Não foi possível fechar automaticamente: {exc}")
             self.msleep(1500)
 
-        binario = self._caminho_brave()
-        if not binario:
-            self.finalizado.emit(
-                False,
-                "Brave não encontrado. Instale o navegador em /Applications.",
-            )
-            return
-
         porta = CDP_URL.rsplit(":", 1)[-1]
-        self.saida.emit(f"Abrindo Brave com depuração na porta {porta}...")
+        self.saida.emit(f"Abrindo {nome_app} com depuração na porta {porta}...")
         try:
             subprocess.Popen(
                 [binario, f"--remote-debugging-port={porta}", HOME_URL],
@@ -1940,21 +1956,21 @@ class BraveWorker(QThread):
                 start_new_session=True,
             )
         except Exception as exc:  # noqa: BLE001
-            self.finalizado.emit(False, f"Não foi possível abrir o Brave: {exc}")
+            self.finalizado.emit(False, f"Não foi possível abrir o navegador: {exc}")
             return
 
         # Aguarda até 30 s pelo endpoint de depuração.
         for _ in range(60):
             if _cdp_ativo():
                 self.finalizado.emit(
-                    True, "Brave aberto e conectado (porta 9222)."
+                    True, f"{nome_app} aberto e conectado (porta {porta})."
                 )
                 return
             self.msleep(500)
         self.finalizado.emit(
             False,
-            "O Brave abriu, mas a porta 9222 não respondeu. "
-            "Feche todas as janelas do Brave e tente novamente.",
+            f"O {nome_app} abriu, mas a porta {porta} não respondeu. "
+            f"Feche todas as janelas do {nome_app} e tente novamente.",
         )
 
 
@@ -2418,9 +2434,9 @@ class MainWindow(QMainWindow):
         sessao_layout = QHBoxLayout(grupo_sessao)
         sessao_layout.addWidget(QLabel(f"Cookie ({COOKIE_NAME}):"))
         self.campo_cookie = QLineEdit()
-        self.campo_cookie.setPlaceholderText("Cookie preenchido automaticamente do Brave")
+        self.campo_cookie.setPlaceholderText("Cookie preenchido automaticamente do navegador")
         sessao_layout.addWidget(self.campo_cookie)
-        self.botao_cookie_brave = QPushButton("Buscar no Brave")
+        self.botao_cookie_brave = QPushButton("Buscar no navegador")
         self.botao_cookie_brave.clicked.connect(self._carregar_cookie_brave)
         sessao_layout.addWidget(self.botao_cookie_brave)
         self.botao_ambiente = QPushButton("Configurar ambiente")
@@ -2605,9 +2621,9 @@ class MainWindow(QMainWindow):
             linha_instalar.addWidget(botao)
         ambiente_layout.addLayout(linha_instalar)
 
-        self.botao_abrir_brave = QPushButton("Abrir Brave com depuração (9222)")
+        self.botao_abrir_brave = QPushButton("Abrir navegador com depuração (9222)")
         self.botao_abrir_brave.clicked.connect(self.abrir_brave)
-        self.botao_abrir_sistema = QPushButton("Abrir sistema no Brave")
+        self.botao_abrir_sistema = QPushButton("Abrir sistema no navegador")
         self.botao_abrir_sistema.clicked.connect(self.abrir_sistema)
         self.botao_atualizar_cookies = QPushButton("Atualizar cookies")
         self.botao_atualizar_cookies.clicked.connect(
@@ -2647,19 +2663,20 @@ class MainWindow(QMainWindow):
             cookies = buscar_cookies_no_brave()
         except Exception as exc:  # noqa: BLE001
             if not silent:
-                QMessageBox.warning(self, "Cookie do Brave", str(exc))
-            self._log(f"Não foi possível ler os cookies do Brave: {exc}")
+                QMessageBox.warning(self, "Cookie do navegador", str(exc))
+            self._log(f"Não foi possível ler os cookies do navegador: {exc}")
             return
         self.campo_cookie.setText(cookies["__Secure-DA"])
         self.cookie_sessao = cookies["JSESSIONID"]
-        self._log("Cookies de sessão obtidos do Brave (JWT + JSESSIONID).")
+        navegador = brave_cookie.ULTIMO_NAVEGADOR or "navegador Chromium"
+        self._log(f"Cookies de sessão obtidos do {navegador} (JWT + JSESSIONID).")
         aviso = _aviso_expiracao(cookies["__Secure-DA"])
         if aviso:
             self._log(f"ATENÇÃO: {aviso}")
             if not silent:
                 self.statusBar().showMessage(aviso)
         if not silent and not aviso:
-            self.statusBar().showMessage("Cookies do Brave atualizados.")
+            self.statusBar().showMessage("Cookies do navegador atualizados.")
 
     def _renovar_token_periodicamente(self) -> None:
         """Relê o token do Brave periodicamente e avisa antes de expirar."""
@@ -2670,7 +2687,7 @@ class MainWindow(QMainWindow):
         if cookie != cookie_atual or sessao != self.cookie_sessao:
             self.campo_cookie.setText(cookie)
             self.cookie_sessao = sessao
-            self._log("Token de autenticação renovado automaticamente do Brave.")
+            self._log("Token de autenticação renovado automaticamente do navegador.")
         aviso = _aviso_expiracao(cookie)
         if aviso:
             self._log(f"ATENÇÃO: {aviso}")
@@ -2817,14 +2834,17 @@ class MainWindow(QMainWindow):
         except Exception as exc:  # noqa: BLE001
             item(False, f"Chromium do Playwright: {exc}")
 
-        item(_cdp_ativo(), f"Brave com depuração na porta {CDP_URL.rsplit(':', 1)[-1]}")
+        item(
+            _cdp_ativo(),
+            f"Navegador Chromium com depuração na porta {CDP_URL.rsplit(':', 1)[-1]}",
+        )
 
         try:
             cookies = buscar_cookies_no_brave()
-            item(True, "Cookies do Brave: JWT + JSESSIONID encontrados")
+            item(True, "Cookies do navegador: JWT + JSESSIONID encontrados")
             self.cookie_sessao = cookies["JSESSIONID"]
         except Exception as exc:  # noqa: BLE001
-            item(False, f"Cookies do Brave: {exc}")
+            item(False, f"Cookies do navegador: {exc}")
 
     def _iniciar_config_worker(self, worker: QThread) -> bool:
         if self.config_worker is not None and self.config_worker.isRunning():
@@ -2887,26 +2907,31 @@ class MainWindow(QMainWindow):
         )
 
     def abrir_brave(self) -> None:
-        """Fecha (se necessário) e abre o Brave com a porta de depuração ativa."""
+        """Fecha (se necessário) e abre um Chromium com depuração remota."""
         if _cdp_ativo():
             QMessageBox.information(
-                self, "Brave",
-                "O Brave já está com a depuração ativa na porta 9222.",
+                self, "Navegador",
+                "O navegador já está com a depuração ativa na porta 9222.",
             )
             return
         if self._pergunta_sim_nao(
-            "Abrir Brave com depuração",
-            "Para usar a sessão real do Brave é necessário fechar o navegador "
-            "e reabri-lo com a depuração ativa (porta 9222).\n\n"
-            "Deseja fechar o Brave e abrir novamente?",
+            "Abrir navegador com depuração",
+            "Para usar a sessão real do navegador (Brave, Chrome, Edge, "
+            "Vivaldi ou Chromium) é necessário fechá-lo e reabri-lo com a "
+            "depuração ativa (porta 9222).\n\n"
+            "Deseja fechar o navegador e abrir novamente?",
         ):
             self._iniciar_config_worker(BraveWorker(fechar=True, parent=self))
 
     def abrir_sistema(self) -> None:
-        """Abre a página do sistema de débitos no Brave."""
+        """Abre a página do sistema no navegador Chromium detectado."""
         try:
             if sys.platform == "darwin":
-                subprocess.Popen(["open", "-a", "Brave Browser", HOME_URL])
+                binario = BraveWorker._caminho_brave()
+                if binario:
+                    subprocess.Popen([binario, HOME_URL])
+                else:
+                    subprocess.Popen(["open", HOME_URL])
             else:
                 import webbrowser
 
@@ -2914,8 +2939,8 @@ class MainWindow(QMainWindow):
             self._log_ambiente(f"Sistema aberto no navegador: {HOME_URL}")
             if not _cdp_ativo():
                 self._log_ambiente(
-                    "Dica: use 'Abrir Brave com depuração (9222)' para que o "
-                    "programa reaproveite a sessão logada."
+                    "Dica: use 'Abrir navegador com depuração (9222)' para que "
+                    "o programa reaproveite a sessão logada."
                 )
         except Exception as exc:  # noqa: BLE001
             QMessageBox.warning(self, "Abrir sistema", str(exc))
