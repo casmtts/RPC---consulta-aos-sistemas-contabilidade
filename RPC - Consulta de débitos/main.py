@@ -311,6 +311,15 @@ def _campo(registro: dict, nome: str) -> str:
     return ""
 
 
+def _competencia_resultado(
+    competencia_original: str, debito: dict, modo_revisao: bool
+) -> str:
+    """Na revisão, usa a competência da planilha (geração do débito)."""
+    if modo_revisao or debito.get("_pesquisa_por") != "competencia":
+        return competencia_original or debito["competencia"]
+    return debito["competencia"]
+
+
 def _tipo_debito_com_migracao(tipo_site: str, registro: dict) -> str:
     """Acrescenta '(M)' quando a origem da planilha indica débito migrado."""
     tipo = str(tipo_site or "").strip()
@@ -928,10 +937,8 @@ class ConsultaWorker(QThread):
                             "Tipo de Débito": _tipo_debito_com_migracao(
                                 debito["tipo_debito"], registro
                             ),
-                            "Competência": (
-                                debito["competencia"]
-                                if debito.get("_pesquisa_por") == "competencia"
-                                else (competencia_original or debito["competencia"])
+                            "Competência": _competencia_resultado(
+                                competencia_original, debito, self.modo_revisao
                             ),
                             "_competencia_site": debito["competencia"],
                             "Valor (R$)": f"{debito['valor']:.2f}".replace(".", ","),

@@ -160,7 +160,10 @@ consultar, para que o próprio site devolva a competência original do débito
 (ex.: `fev/22`) em vez da referência da cobrança atual (`1/2026`). Quando o
 filtro é aplicado, o log registra: *"Filtro do site 'Pesquisar por: Competência'
 aplicado"*. Se o filtro não existir na tela, o programa usa a `Competência
-Débito` (ou `Competência Guia`) da planilha de entrada como fallback.
+Débito` (ou `Competência Guia`) da planilha de entrada como fallback. Na
+**revisão** de itens já consultados, a competência sempre vem da planilha — a
+data em que o débito foi gerado (ex.: `2022`) —, corrigindo os resultados
+antigos que mostravam a data da consulta em vez do período original.
 
 Os relatórios — tanto o **salvo automaticamente** ao parar quanto o gerado
 pelo botão **Salvar resultado...** — são gravados na pasta **`relatorios/`**,
