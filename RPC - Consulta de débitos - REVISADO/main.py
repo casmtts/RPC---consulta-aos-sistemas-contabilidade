@@ -538,6 +538,52 @@ def _sem_acento(texto: str) -> str:
     )
 
 
+def _cpf_valido(valor: str) -> bool:
+    """Valida os dígitos verificadores de um CPF."""
+    digitos = "".join(caracter for caracter in valor if caracter.isdigit())
+    if len(digitos) != 11 or len(set(digitos)) == 1:
+        return False
+    for tamanho in (9, 10):
+        soma = sum(
+            int(digitos[i]) * (tamanho + 1 - i) for i in range(tamanho)
+        )
+        resto = (soma * 10) % 11
+        esperado = 0 if resto == 10 else resto
+        if int(digitos[tamanho]) != esperado:
+            return False
+    return True
+
+
+def _cnpj_valido(valor: str) -> bool:
+    """Valida os dígitos verificadores de um CNPJ."""
+    digitos = "".join(caracter for caracter in valor if caracter.isdigit())
+    if len(digitos) != 14 or len(set(digitos)) == 1:
+        return False
+    pesos = (
+        (5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2),
+        (6, 5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2),
+    )
+    for indice, tabela in enumerate(pesos):
+        soma = sum(int(digitos[i]) * tabela[i] for i in range(12))
+        resto = soma % 11
+        esperado = 0 if resto < 2 else 11 - resto
+        if int(digitos[12 + indice]) != esperado:
+            return False
+    return True
+
+
+def _documento_valido(documento: str, tipo: str = "") -> bool:
+    """CPF/CNPJ com dígitos inválidos não chegam a ser consultados no site."""
+    if _sem_acento(tipo).strip().upper() in ("IMOVEL", "CIF"):
+        return True  # CIF não tem dígito verificador conhecido.
+    digitos = "".join(caracter for caracter in documento if caracter.isdigit())
+    if len(digitos) == 11:
+        return _cpf_valido(digitos)
+    if len(digitos) == 14:
+        return _cnpj_valido(digitos)
+    return True  # formato desconhecido: deixa o site decidir.
+
+
 def _campo(registro: dict, nome: str) -> str:
     """Busca o valor de uma coluna pelo nome, ignorando acentos/maiúsculas."""
     alvo = _sem_acento(nome)
@@ -1658,6 +1704,30 @@ class ConsultaWorker(QThread):
                 or _campo(registro, "competencia guia")
                 or _campo(registro, "competencia")
             )
+
+            # CPF/CNPJ com dígito verificador errado só gera erro-page no site
+            # (13445, 13446, 404...). Não adianta repetir: marca como não
+            # verificado e segue para o próximo, sem desperdiçar consultas.
+            if not _documento_valido(documento, tipo):
+                self._publicar(documento, [{
+                    "Nome": nome, "CPF": documento,
+                    "Tipo de Débito": "-",
+                    "Competência": competencia_original or "-",
+                    "Valor (R$)": "0,00",
+                    "Status": "NAO VERIFICADO",
+                    "Erro": (
+                        "CPF/CNPJ inválido (dígito verificador) — "
+                        "conferir a planilha de entrada."
+                    ),
+                }], indice)
+                if self.arquivo_progresso is not None:
+                    salvar_progresso(
+                        self.arquivo_progresso, indice, total, self.resultados,
+                        em_andamento=False, indice_atual=indice,
+                        entrada=self.entrada, aba=self.aba,
+                    )
+                continue
+
             self.progresso.emit(
                 int((indice - 1) * 100 / total), f"Consultando {indice}/{total}: {rotulo}"
             )
