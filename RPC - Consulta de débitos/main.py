@@ -16,7 +16,9 @@ from datetime import datetime
 from pathlib import Path
 
 from PyQt6.QtCore import Qt, QThread, QTimer, pyqtSignal
-from PyQt6.QtGui import QBrush, QColor, QKeySequence, QShortcut
+from PyQt6.QtGui import (
+    QBrush, QColor, QKeySequence, QPainter, QPen, QPixmap, QShortcut,
+)
 from PyQt6.QtWidgets import (
     QApplication,
     QComboBox,
@@ -56,6 +58,9 @@ MARGEM_RENOVACAO_TOKEN = 60
 
 COLUNAS_SAIDA = list(PLANILLA_CABECALOS) + ["Erro"]
 SEPARADOR_CSV = ";"
+
+# Pincel em cache para destacar linhas que estão sendo revisadas.
+_PINCEL_REVISAO: QBrush | None = None
 
 StatusConsulta = {
     "PENDENTE": "pendente",
@@ -997,6 +1002,7 @@ class MainWindow(QMainWindow):
         self.worker_revisao: ConsultaWorker | None = None
         self.resultados_revisao: list[dict] = []
         self._revisao_paralela_ativa = False
+        self._documentos_em_revisao: set[str] = set()
         self.worker: ConsultaWorker | None = None
 
         self._montar_interface()
@@ -1519,6 +1525,66 @@ class MainWindow(QMainWindow):
             self.resultados.append(item)
             self._ao_item(item)
 
+    @staticmethod
+    def _pincel_em_revisao() -> QBrush:
+        """Pincel laranja com faixas diagonais (aspecto de 'em obra')."""
+        global _PINCEL_REVISAO
+        if _PINCEL_REVISAO is None:
+            tecido = QPixmap(16, 16)
+            tecido.fill(QColor("#FFE0B2"))
+            pintor = QPainter(tecido)
+            caneta = QPen(QColor("#FF8C00"))
+            caneta.setWidth(4)
+            pintor.setPen(caneta)
+            for deslocamento in range(-16, 32, 8):
+                pintor.drawLine(deslocamento, 16, deslocamento + 16, 0)
+            pintor.end()
+            _PINCEL_REVISAO = QBrush(tecido)
+        return _PINCEL_REVISAO
+
+    def _marcar_em_revisao(self, documentos: set[str]) -> None:
+        """Pinta de laranja listrado as linhas dos documentos em revisão."""
+        if not documentos:
+            return
+        pincel = self._pincel_em_revisao()
+        coluna_cpf = COLUNAS_SAIDA.index("CPF")
+        self._documentos_em_revisao |= set(documentos)
+        for linha in range(self.tabela_resultados.rowCount()):
+            celula = self.tabela_resultados.item(linha, coluna_cpf)
+            if celula is None or celula.text().strip() not in documentos:
+                continue
+            for coluna in range(self.tabela_resultados.columnCount()):
+                item = self.tabela_resultados.item(linha, coluna)
+                if item is not None:
+                    item.setBackground(pincel)
+                    item.setForeground(QBrush(QColor("#000000")))
+
+    def _desmarcar_em_revisao(self) -> None:
+        """Restaura as cores normais das linhas que estavam em revisão."""
+        if not self._documentos_em_revisao:
+            return
+        coluna_cpf = COLUNAS_SAIDA.index("CPF")
+        for linha in range(self.tabela_resultados.rowCount()):
+            celula = self.tabela_resultados.item(linha, coluna_cpf)
+            if celula is None:
+                continue
+            documento = celula.text().strip()
+            if documento not in self._documentos_em_revisao:
+                continue
+            for resultado in self.resultados:
+                if str(resultado.get("CPF", "")).strip() == documento:
+                    cor = QColor(
+                        COR_COM_DEBITOS if _tem_debitos(resultado) else COR_SEM_DEBITOS
+                    )
+                    pincel = QBrush(cor)
+                    for coluna in range(self.tabela_resultados.columnCount()):
+                        item = self.tabela_resultados.item(linha, coluna)
+                        if item is not None:
+                            item.setBackground(pincel)
+                            item.setForeground(QBrush(QColor(PALETA["texto"])))
+                    break
+        self._documentos_em_revisao.clear()
+
     def _documentos_pendentes(self) -> set[str]:
         """Documentos com resultado que ainda precisa de revisão."""
         documentos = {
@@ -1547,6 +1613,7 @@ class MainWindow(QMainWindow):
             self._log("Revisão paralela: registros originais não encontrados.")
             return
 
+        self._marcar_em_revisao(documentos)
         self.resultados_revisao = []
         self.worker_revisao = ConsultaWorker(
             registros,
@@ -1574,6 +1641,7 @@ class MainWindow(QMainWindow):
         self._log(f"Revisão paralela: {mensagem}")
         self._revisao_paralela_ativa = False
         self._mesclar_revisao_paralela()
+        self._desmarcar_em_revisao()
 
     def _limpar_worker_revisao(self) -> None:
         self.worker_revisao = None
@@ -1684,6 +1752,11 @@ class MainWindow(QMainWindow):
 
         # Guarda a seleção: se parar de novo, Revisar continua exatamente daqui.
         self._registros_revisao = list(registros)
+        self._marcar_em_revisao({
+            self._documento_registro(r)
+            for r in registros
+            if self._documento_registro(r)
+        })
 
         self._carregar_cookie_brave(silent=True)
         self.barra_progresso.setValue(0)
@@ -1750,6 +1823,10 @@ class MainWindow(QMainWindow):
         # Mescla a revisão paralela quando as duas consultas terminaram.
         if self.resultados_revisao and not self._revisao_paralela_ativa:
             self._mesclar_revisao_paralela()
+        if self._documentos_em_revisao and not (
+            self.worker_revisao is not None and self.worker_revisao.isRunning()
+        ):
+            self._desmarcar_em_revisao()
         if "Concluído" in mensagem and self.caminho_entrada:
             arquivo = _arquivo_progresso(
                 self.caminho_entrada,

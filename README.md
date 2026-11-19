@@ -199,7 +199,9 @@ Descrições especiais em `Tipo de Débito`:
   consultas terminam, evitando conflito entre elas. Os documentos pendentes
   são **excluídos da consulta principal** — o worker principal os ignora —,
   então cada rotina atua num conjunto distinto de CPFs e nunca consulta o
-  mesmo documento ao mesmo tempo. O **ESC 2x** / botão **Parar** encerra as
+  mesmo documento ao mesmo tempo. As linhas em revisão aparecem com **fundo
+  laranja de faixas diagonais** (aspecto de “em obra”) e voltam às cores
+  normais quando a revisão termina. O **ESC 2x** / botão **Parar** encerra as
   duas consultas.
 
 ---
