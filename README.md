@@ -198,29 +198,30 @@ Descrições especiais em `Tipo de Débito`:
   repetidos. Se a revisão também for interrompida, um novo clique continua de
   onde parou.
 - **Revisão paralela:** marque **Revisar pendências em paralelo** na aba
-  Consulta. Ao clicar em **Executar**, um segundo worker reconfulta ao mesmo
-  tempo os itens já pendentes (erro, `NAO VERIFICADO`, sem débitos). Os
-  resultados revisados ficam isolados e só entram na tabela quando as duas
-  consultas terminam, evitando conflito entre elas. Os documentos pendentes
-  são **excluídos da consulta principal** — o worker principal os ignora —,
-  então cada rotina atua num conjunto distinto de CPFs e nunca consulta o
-  mesmo documento ao mesmo tempo. **Importante:** os dois workers usam o
-  mesmo `JSESSIONID` do navegador; se consultassem o site simultaneamente, a sessão
-  JSF trocaria o contribuinte selecionado e um veria o documento do outro
-  (erros “o site está com o documento X, mas foi pedido Y”). Por isso o acesso
-  ao site é **serializado por um lock**: as duas rotinas andam no mesmo
-  processo, mas nunca pisam no site ao mesmo tempo. As linhas em revisão aparecem com **fundo
-  laranja escuro com faixas diagonais** bem visíveis (aspecto de “em obra”),
-  aplicadas **somente ao documento que está sendo revisado naquele instante**;
-  ao passar para o próximo, a faixa anterior é removida. O andamento aparece no rótulo **Revisão
-  paralela: ...** na aba Consulta — inclusive a mensagem *sem pendências para
-  revisar*, que explica quando não há itens pendentes para a segunda consulta.
-  O **ESC 2x** / botão **Parar** encerra as duas consultas. Os resultados da
-  revisão são gravados de volta no arquivo de progresso na mesclagem, para
-  que nenhuma linha desapareça ao reabrir o programa. A revisão paralela tem
-  **progresso próprio** (arquivo `_revisao_progresso.json`): se for
-  interrompida, retoma de onde parou na próxima execução, sem recomeçar do
-  primeiro pendente. Ao concluir, esse arquivo é removido.
+  Consulta. Ao clicar em **Executar**, um segundo worker reconfulta os itens
+  já pendentes (erro, `NAO VERIFICADO`, sem débitos) enquanto a consulta
+  principal varre o restante da planilha.
+
+  - Os dois workers compartilham o mesmo `JSESSIONID` do navegador. Se
+    consultassem o site ao mesmo tempo, a sessão JSF trocaria o contribuinte
+    selecionado e um veria o documento do outro (erro “o site está com o
+    documento X, mas foi pedido Y”). Por isso o acesso ao site é
+    **serializado por um lock**: as duas rotinas rodam na mesma execução,
+    mas nunca pisam no site simultaneamente.
+  - As linhas em revisão aparecem com **fundo laranja escuro com faixas
+    diagonais** bem visíveis (aspecto de “em obra”), aplicadas **somente ao
+    documento que está sendo revisado naquele instante**. Ao passar para o
+    próximo, a faixa anterior é removida. Isso vale também para o **Revisar**
+    manual.
+  - O andamento aparece no rótulo **Revisão paralela: ...** na aba Consulta,
+    inclusive a mensagem *sem pendências para revisar*, que explica quando
+    não há itens pendentes para a segunda consulta. O **ESC 2x** / botão
+    **Parar** encerra as duas consultas.
+  - A revisão tem **progresso próprio** (`_revisao_progresso.json`): se for
+    interrompida, retoma de onde parou na próxima execução, sem recomeçar do
+    primeiro pendente. Ao concluir, o arquivo é removido. Ao mesclar, os
+    resultados revisados são gravados também no progresso da consulta, para
+    nenhuma linha desaparecer ao reabrir o programa.
 
 ---
 
