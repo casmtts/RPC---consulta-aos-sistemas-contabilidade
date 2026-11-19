@@ -65,7 +65,11 @@ consultar situação cadastral de CNPJ ( BrasilAPI / ReceitaWS ), em GUI e termi
    rejeita), localiza os débitos no relatório antigo
    `relatorio-lancamentos-debito-divida-ativa-*.csv` (procurado na pasta do
    programa, na pasta pai ou no diretório atual) e preenche o resultado com
-   esses débitos — sem consultar o site e sem marcar como inválido.
+   esses débitos — sem consultar o site e sem marcar como inválido. O mesmo
+   fallback vale se a consulta ao site falhar (campo vazio, sessão, erro):
+   antes de marcar `NAO VERIFICADO`/`ERRO`, o programa procura o CPF no
+   relatório antigo. Se houver débitos `DÉBITO`, eles entram como
+   `VERIFICADO`; débitos `CANCELADO` não são considerados.
 
 Saídas incluem `CIF`, `ID Dívida` e `Vencimento`, para identificar, por
 exemplo, qual imóvel (CIF) está devendo IPTU.

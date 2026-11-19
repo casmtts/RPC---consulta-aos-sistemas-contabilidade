@@ -1741,6 +1741,37 @@ class ConsultaWorker(QThread):
                 self.resultados.append(item)
                 self.item_concluido.emit(item)
 
+    def _publicar_fallback_antigo(
+        self, documento: str, nome: str, competencia: str,
+        indice: int, mensagem_erro: str,
+    ) -> bool:
+        """Usa o relatório antigo se a consulta ao site não deu certo."""
+        digitos = "".join(
+            caracter for caracter in documento if caracter.isdigit()
+        )
+        antigos = _debitos_relatorio_antigo().get(digitos, [])
+        if not antigos:
+            return False
+        novos = [
+            {
+                "Nome": nome, "CPF": documento,
+                "Tipo de Débito": debito["tipo_debito"],
+                "Competência": debito["competencia"],
+                "Valor (R$)": f"{debito['valor']:.2f}".replace(".", ","),
+                "Status": "VERIFICADO",
+                "Erro": (
+                    "Débito localizado no relatório antigo (sistema legado). "
+                    f"Site: {mensagem_erro[:90]}"
+                ),
+                "CIF": debito["cif"],
+                "ID Dívida": debito["id_divida"],
+                "Vencimento": debito["vencimento"],
+            }
+            for debito in antigos
+        ]
+        self._publicar(documento, novos, indice)
+        return True
+
     def run(self) -> None:
         total = len(self.registros)
         ok = erros = processados = 0
@@ -1972,19 +2003,28 @@ class ConsultaWorker(QThread):
                 # resultado para este item e encerra o loop imediatamente.
                 break
             except (ConsultaNaoVerificada, ConsultaHttpNaoVerificada) as exc:
-                erros += 1
-                self._publicar(documento, [{
-                    "Nome": nome, "CPF": documento,
-                    "Tipo de Débito": "-", "Competência": competencia_original or "-",
-                    "Valor (R$)": "0,00", "Status": "NAO VERIFICADO", "Erro": str(exc),
-                }], indice_real)
+                if not self._publicar_fallback_antigo(
+                    documento, nome, competencia_original, indice_real, str(exc)
+                ):
+                    erros += 1
+                    self._publicar(documento, [{
+                        "Nome": nome, "CPF": documento,
+                        "Tipo de Débito": "-",
+                        "Competência": competencia_original or "-",
+                        "Valor (R$)": "0,00", "Status": "NAO VERIFICADO",
+                        "Erro": str(exc),
+                    }], indice_real)
             except Exception as exc:  # noqa: BLE001
-                erros += 1
-                self._publicar(documento, [{
-                    "Nome": nome, "CPF": documento,
-                    "Tipo de Débito": "-", "Competência": competencia_original or "-",
-                    "Valor (R$)": "0,00", "Status": "ERRO", "Erro": str(exc),
-                }], indice_real)
+                if not self._publicar_fallback_antigo(
+                    documento, nome, competencia_original, indice_real, str(exc)
+                ):
+                    erros += 1
+                    self._publicar(documento, [{
+                        "Nome": nome, "CPF": documento,
+                        "Tipo de Débito": "-",
+                        "Competência": competencia_original or "-",
+                        "Valor (R$)": "0,00", "Status": "ERRO", "Erro": str(exc),
+                    }], indice_real)
 
             processados = indice_real
             if self.arquivo_progresso is not None:
