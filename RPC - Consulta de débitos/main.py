@@ -35,6 +35,7 @@ from PyQt6.QtWidgets import (
     QPushButton,
     QScrollArea,
     QStatusBar,
+    QStyledItemDelegate,
     QTabWidget,
     QTableWidget,
     QTableWidgetItem,
@@ -66,6 +67,40 @@ _PINCEL_REVISAO: QBrush | None = None
 # Consulta principal e revisão paralela compartilham o JSESSIONID do Brave:
 # o acesso ao site precisa ser serializado para não trocar o contribuinte.
 _SESSAO_SITE_LOCK = threading.Lock()
+
+# Papel da marcação "em revisão" nas células da tabela.
+_MARCA_REVISAO = Qt.ItemDataRole.UserRole + 20
+
+
+def _pincel_revisao() -> QBrush:
+    """Pincel laranja com faixas diagonais (aspecto de 'em obra')."""
+    global _PINCEL_REVISAO
+    if _PINCEL_REVISAO is None:
+        tecido = QPixmap(16, 16)
+        tecido.fill(QColor("#FFE0B2"))
+        pintor = QPainter(tecido)
+        caneta = QPen(QColor("#FF8C00"))
+        caneta.setWidth(4)
+        pintor.setPen(caneta)
+        for deslocamento in range(-16, 32, 8):
+            pintor.drawLine(deslocamento, 16, deslocamento + 16, 0)
+        pintor.end()
+        _PINCEL_REVISAO = QBrush(tecido)
+    return _PINCEL_REVISAO
+
+
+class _DelegadoRevisao(QStyledItemDelegate):
+    """Pinta a faixa laranja por cima da célula, mesmo com stylesheet ativo."""
+
+    def paint(self, painter, option, index) -> None:
+        super().paint(painter, option, index)
+        if not index.data(_MARCA_REVISAO):
+            return
+        painter.save()
+        painter.setOpacity(0.55)
+        painter.fillRect(option.rect, _pincel_revisao())
+        painter.restore()
+
 
 StatusConsulta = {
     "PENDENTE": "pendente",
@@ -1280,6 +1315,9 @@ class MainWindow(QMainWindow):
         resultados_layout = QVBoxLayout(aba_resultados)
         self.tabela_resultados = QTableWidget()
         _configurar_tabela(self.tabela_resultados, COLUNAS_SAIDA)
+        self.tabela_resultados.setItemDelegate(
+            _DelegadoRevisao(self.tabela_resultados)
+        )
         resultados_layout.addWidget(self.tabela_resultados)
         linha_resultados = QHBoxLayout()
         self.botao_revisar = QPushButton("Revisar")
@@ -1592,19 +1630,7 @@ class MainWindow(QMainWindow):
     @staticmethod
     def _pincel_em_revisao() -> QBrush:
         """Pincel laranja com faixas diagonais (aspecto de 'em obra')."""
-        global _PINCEL_REVISAO
-        if _PINCEL_REVISAO is None:
-            tecido = QPixmap(16, 16)
-            tecido.fill(QColor("#FFE0B2"))
-            pintor = QPainter(tecido)
-            caneta = QPen(QColor("#FF8C00"))
-            caneta.setWidth(4)
-            pintor.setPen(caneta)
-            for deslocamento in range(-16, 32, 8):
-                pintor.drawLine(deslocamento, 16, deslocamento + 16, 0)
-            pintor.end()
-            _PINCEL_REVISAO = QBrush(tecido)
-        return _PINCEL_REVISAO
+        return _pincel_revisao()
 
     def _marcar_em_revisao(self, documentos: set[str]) -> None:
         """Pinta de laranja listrado as linhas dos documentos em revisão."""
@@ -1620,6 +1646,7 @@ class MainWindow(QMainWindow):
             for coluna in range(self.tabela_resultados.columnCount()):
                 item = self.tabela_resultados.item(linha, coluna)
                 if item is not None:
+                    item.setData(_MARCA_REVISAO, True)
                     item.setBackground(pincel)
                     item.setForeground(QBrush(QColor("#000000")))
 
@@ -1635,6 +1662,10 @@ class MainWindow(QMainWindow):
             documento = celula.text().strip()
             if documento not in self._documentos_em_revisao:
                 continue
+            for coluna in range(self.tabela_resultados.columnCount()):
+                item = self.tabela_resultados.item(linha, coluna)
+                if item is not None:
+                    item.setData(_MARCA_REVISAO, False)
             for resultado in self.resultados:
                 if str(resultado.get("CPF", "")).strip() == documento:
                     cor = QColor(
@@ -1754,6 +1785,19 @@ class MainWindow(QMainWindow):
             self._ao_item(item)
         total = len(self.resultados_revisao)
         self.resultados_revisao = []
+        # Persiste a mesclagem no progresso para não perder resultados.
+        if self.caminho_entrada:
+            arquivo = _arquivo_progresso(self.caminho_entrada, "")
+            progresso = ler_progresso(arquivo)
+            if progresso is not None:
+                salvar_progresso(
+                    arquivo,
+                    progresso["processados"],
+                    progresso["total"],
+                    self.resultados,
+                    em_andamento=bool(progresso.get("em_andamento")),
+                    indice_atual=int(progresso.get("indice_atual") or 0),
+                )
         self._log(f"Revisão paralela mesclada: {total} linha(s) atualizada(s).")
         self.botao_salvar.setEnabled(bool(self.resultados))
         self._atualizar_botao_revisar()

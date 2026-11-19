@@ -214,7 +214,9 @@ Descrições especiais em `Tipo de Débito`:
   normais quando a revisão termina. O andamento aparece no rótulo **Revisão
   paralela: ...** na aba Consulta — inclusive a mensagem *sem pendências para
   revisar*, que explica quando não há itens pendentes para a segunda consulta.
-  O **ESC 2x** / botão **Parar** encerra as duas consultas.
+  O **ESC 2x** / botão **Parar** encerra as duas consultas. Os resultados da
+  revisão são gravados de volta no arquivo de progresso na mesclagem, para
+  que nenhuma linha desapareça ao reabrir o programa.
 
 ---
 
