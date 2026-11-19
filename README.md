@@ -151,7 +151,9 @@ Status, CIF, ID Dívida, Vencimento e Erro**.
 As linhas são sempre ordenadas pela posição da guia na **planilha de entrada**
 (índice `_indice`), inclusive as que vêm da revisão paralela. Assim, o
 primeiro nome do relatório bate com o primeiro nome da planilha enviada para
-análise — a ordem não muda quando a revisão mescla seus resultados.
+análise — a ordem não muda quando a revisão mescla seus resultados. Os índices
+de progressos antigos também são reparados na abertura: cada CPF volta para a
+linha real que ocupa na planilha.
 
 | Status | Significado |
 |--------|-------------|

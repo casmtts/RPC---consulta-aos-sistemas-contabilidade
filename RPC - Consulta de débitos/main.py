@@ -935,8 +935,10 @@ class ConsultaWorker(QThread):
     def stop(self) -> None:
         self._parar = True
 
-    def _publicar(self, documento: str, novos: list[dict]) -> None:
+    def _publicar(self, documento: str, novos: list[dict], indice: int = 0) -> None:
         """Publica os itens de um documento (normal ou revisão)."""
+        for item in novos:
+            item["_indice"] = indice
         if self.modo_revisao:
             # Na revisão, substituir as linhas antigas do mesmo CPF.
             self.documento_revisado.emit(documento, novos)
@@ -955,6 +957,9 @@ class ConsultaWorker(QThread):
             # Retomada: pular os registros já processados numa execução anterior.
             if indice <= self.indice_inicial:
                 continue
+
+            # Índice real na planilha (a revisão usa uma lista filtrada).
+            indice_real = int(_campo(registro, "_indice_original") or indice)
 
             # Se o token estiver a menos de 1 minuto de vencer, relê o
             # cookie do Brave antes da próxima consulta — sem parar nada.
@@ -993,10 +998,10 @@ class ConsultaWorker(QThread):
                         "CPF/CNPJ inválido (dígito verificador) — "
                         "conferir a planilha de entrada."
                     ),
-                }])
+                }], indice_real)
                 if self.arquivo_progresso is not None:
                     salvar_progresso(
-                        self.arquivo_progresso, indice, total, self.resultados
+                        self.arquivo_progresso, indice_real, total, self.resultados
                     )
                 continue
 
@@ -1067,7 +1072,7 @@ class ConsultaWorker(QThread):
                         }
                         for debito in debitos
                     ]
-                self._publicar(documento, novos)
+                self._publicar(documento, novos, indice_real)
                 ok += 1
             except ConsultaNaoVerificada as exc:
                 erros += 1
@@ -1075,18 +1080,18 @@ class ConsultaWorker(QThread):
                     "Nome": nome, "CPF": documento,
                     "Tipo de Débito": "-", "Competência": competencia_original or "-",
                     "Valor (R$)": "0,00", "Status": "NAO VERIFICADO", "Erro": str(exc),
-                }])
+                }], indice_real)
             except Exception as exc:  # noqa: BLE001
                 erros += 1
                 self._publicar(documento, [{
                     "Nome": nome, "CPF": documento,
                     "Tipo de Débito": "-", "Competência": competencia_original or "-",
                     "Valor (R$)": "0,00", "Status": "ERRO", "Erro": str(exc),
-                }])
+                }], indice_real)
 
-            processados = indice
+            processados = indice_real
             if self.arquivo_progresso is not None:
-                salvar_progresso(self.arquivo_progresso, indice, total, self.resultados)
+                salvar_progresso(self.arquivo_progresso, indice_real, total, self.resultados)
             self.progresso.emit(int(indice * 100 / total), f"Processado {indice}/{total}")
 
         if self._parar:
@@ -1276,6 +1281,16 @@ class MainWindow(QMainWindow):
         resultados = list(progresso.get("resultados") or [])
         if not resultados:
             return
+        # Repara índices de progressos antigos (ordem da revisão).
+        posicoes: dict[str, int] = {}
+        for posicao, registro in enumerate(self.registros, start=1):
+            documento = self._documento_registro(registro)
+            if documento:
+                posicoes.setdefault(documento, posicao)
+        for item in resultados:
+            documento = str(item.get("CPF", "")).strip()
+            if documento in posicoes:
+                item["_indice"] = posicoes[documento]
         self.resultados = _ordenar_resultados(resultados)
         self.tabela_resultados.setRowCount(0)
         for item in self.resultados:
@@ -1853,7 +1868,8 @@ class MainWindow(QMainWindow):
             return
 
         registros = [
-            r for r in self.registros
+            dict(r, _indice_original=i)
+            for i, r in enumerate(self.registros, start=1)
             if self._documento_registro(r) in documentos
         ]
         if not registros:
@@ -2025,7 +2041,9 @@ class MainWindow(QMainWindow):
                     if str(r.get("CPF", "")).strip()
                 } - pendentes
             registros = [
-                r for r in base if self._documento_registro(r) not in concluidos
+                dict(r, _indice_original=int(_campo(r, "_indice_original") or i))
+                for i, r in enumerate(base, start=1)
+                if self._documento_registro(r) not in concluidos
             ]
             if not registros:
                 QMessageBox.information(
@@ -2053,7 +2071,8 @@ class MainWindow(QMainWindow):
                 )
                 return
             registros = [
-                r for r in self.registros
+                dict(r, _indice_original=i)
+                for i, r in enumerate(self.registros, start=1)
                 if self._documento_registro(r) in documentos
             ]
             if not registros:
