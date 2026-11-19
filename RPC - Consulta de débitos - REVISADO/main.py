@@ -1728,10 +1728,11 @@ class ConsultaWorker(QThread):
                     "Tipo de Débito": "-",
                     "Competência": competencia_original or "-",
                     "Valor (R$)": "0,00",
-                    "Status": "NAO VERIFICADO",
+                    "Status": "DOCUMENTO INVÁLIDO",
                     "Erro": (
                         "CPF/CNPJ inválido (dígito verificador) — "
-                        "conferir a planilha de entrada."
+                        "conferir a planilha de entrada. Não vai para o Revisar "
+                        "porque refazer a consulta não resolve."
                     ),
                 }], indice_real)
                 if self.arquivo_progresso is not None:
@@ -3375,6 +3376,8 @@ class MainWindow(QMainWindow):
             return p["texto_erro"]
         if status == "NAO VERIFICADO":
             return p["texto_atencao"]
+        if status == "DOCUMENTO INVÁLIDO":
+            return p["texto_neutro"]
         if _tem_debitos(item):
             return p["texto_ok"]
         return p["texto_neutro"]
@@ -3437,7 +3440,11 @@ class MainWindow(QMainWindow):
         ID Dívida ou sem Vencimento. Elas voltam para a consulta a fim de
         preencher esses campos.
         """
-        if str(item.get("Status", "")).strip().upper() not in ("OK", "VERIFICADO"):
+        status = str(item.get("Status", "")).strip().upper()
+        # Documento inválido não volta para a revisão: refazer não adianta.
+        if status == "DOCUMENTO INVÁLIDO":
+            return False
+        if status not in ("OK", "VERIFICADO"):
             return True
         descricao = _sem_acento(item.get("Tipo de Débito", ""))
         if "sem debito" in descricao:

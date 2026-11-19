@@ -160,13 +160,15 @@ linha real que ocupa na planilha.
 | `VERIFICADO` | Consulta concluída com sucesso (com débitos ou "Sem débitos"). |
 | `NAO VERIFICADO` | O site não permitiu confirmar o resultado (erro de sessão, 404, página de erro, dúvida). **Nunca** é tratado como "sem débitos". |
 | `ERRO` | Falha inesperada na consulta. |
+| `DOCUMENTO INVÁLIDO` | CPF/CNPJ com dígito verificador errado. Não é consultado e **não entra no Revisar** — refazer não resolve; corrija a planilha. |
 
 **Cores da tabela de resultados:**
 
 | Cor | Onde | Significado |
 |-----|------|-------------|
 | **Vermelho escuro** | texto da coluna `Status` | `ERRO` — a consulta falhou; o item entra no Revisar. |
-| **Laranja** | texto da coluna `Status` | `NAO VERIFICADO` — o site não confirmou o resultado; também entra no Revisar. |
+| **Laranja** | texto da coluna `Status` | `NAO VERIFICADO` — o site não confirmou o resultado; entra no Revisar. |
+| **Neutro/cinza** | texto da coluna `Status` | `DOCUMENTO INVÁLIDO` — erro no CPF/CNPJ da planilha; não entra no Revisar. |
 | **Verde** | texto da coluna `Status` | `VERIFICADO` — consulta concluída. |
 | **Laranja/amarelo com faixas diagonais** | fundo da linha inteira | **Documento em revisão naquele instante** (faixa de “em obra”). Some quando a revisão passa para o próximo. Não é erro — é só destaque visual. |
 
@@ -324,7 +326,7 @@ scripts de análise.
 | `página de erro (código 13429/13414)` | Mesmo tratamento acima: token renovado e consulta refeita automaticamente. |
 | `Botão 'Pesquisar' não encontrado` | O programa abre sessão nova e repete a consulta (até 3x). Se persistir, confira se a aba do sistema está logada no navegador. |
 | `O site está com o documento X, mas foi pedido Y` | O site re-renderizou o campo e restaurou um CPF anterior. O programa redigita o documento e confirma o valor antes de pesquisar; se ainda divergir, descarta o resultado (nunca aceita um débito de outro CPF). |
-| `CPF/CNPJ inválido (dígito verificador)` | CPFs do tipo `000.000.xxx-xx` com dígitos verificadores errados são rejeitados pelo site (erros 13445/13446/404). O programa **não consulta** esses documentos: marca `NAO VERIFICADO` com essa mensagem e segue em frente. Confira a planilha de entrada. |
+| `CPF/CNPJ inválido (dígito verificador)` | CPFs do tipo `000.000.xxx-xx` com dígitos verificadores errados são rejeitados pelo site (erros 13445/13446/404). O programa **não consulta** esses documentos: marca `DOCUMENTO INVÁLIDO` com essa mensagem, não coloca na fila do Revisar e segue em frente. Confira a planilha de entrada. |
 | `Page.goto: net::ERR_ABORTED` | Navegação abortada também dispara nova tentativa com sessão nova. |
 | "Playwright Sync API inside the asyncio loop" | Corrigido: cada sessão roda em thread limpa. |
 | macOS não abre o `.app` | Botão direito → Abrir → Abrir (app assinado localmente, sem certificado Apple). |

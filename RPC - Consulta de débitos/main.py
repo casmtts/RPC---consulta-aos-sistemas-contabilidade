@@ -993,7 +993,7 @@ class ConsultaWorker(QThread):
                     "Tipo de Débito": "-",
                     "Competência": competencia_original or "-",
                     "Valor (R$)": "0,00",
-                    "Status": "NAO VERIFICADO",
+                    "Status": "DOCUMENTO INVÁLIDO",
                     "Erro": (
                         "CPF/CNPJ inválido (dígito verificador) — "
                         "conferir a planilha de entrada."
@@ -1804,6 +1804,7 @@ class MainWindow(QMainWindow):
             str(r.get("CPF", "")).strip()
             for r in self.resultados
             if str(r.get("Status", "")).strip().upper() not in ("OK", "VERIFICADO")
+            and str(r.get("Status", "")).strip().upper() != "DOCUMENTO INVÁLIDO"
             or "sem débitos" in str(r.get("Tipo de Débito", "")).lower()
         }
         documentos.discard("")
@@ -2032,6 +2033,7 @@ class MainWindow(QMainWindow):
                     str(item.get("CPF", "")).strip()
                     for item in self.resultados
                     if str(item.get("Status", "")).strip().upper() not in ("OK", "VERIFICADO")
+                    and str(item.get("Status", "")).strip().upper() != "DOCUMENTO INVÁLIDO"
                     or "sem débitos" in str(item.get("Tipo de Débito", "")).lower()
                 }
                 pendentes.discard("")
@@ -2056,6 +2058,7 @@ class MainWindow(QMainWindow):
                 str(r.get("CPF", "")).strip()
                 for r in self.resultados
                 if str(r.get("Status", "")).strip().upper() not in ("OK", "VERIFICADO")
+                and str(r.get("Status", "")).strip().upper() != "DOCUMENTO INVÁLIDO"
                 or "sem débitos" in str(r.get("Tipo de Débito", "")).lower()
             }
             documentos.discard("")
