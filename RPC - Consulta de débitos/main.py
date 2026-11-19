@@ -78,9 +78,9 @@ def _pincel_revisao() -> QBrush:
     global _PINCEL_REVISAO
     if _PINCEL_REVISAO is None:
         tecido = QPixmap(16, 16)
-        tecido.fill(QColor("#FFB74D"))
+        tecido.fill(QColor("#FFE082"))
         pintor = QPainter(tecido)
-        caneta = QPen(QColor("#C62828"))
+        caneta = QPen(QColor("#F57C00"))
         caneta.setWidth(6)
         pintor.setPen(caneta)
         for deslocamento in range(-16, 32, 8):

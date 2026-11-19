@@ -154,6 +154,15 @@ Status, CIF, ID Dívida, Vencimento e Erro**.
 | `NAO VERIFICADO` | O site não permitiu confirmar o resultado (erro de sessão, 404, página de erro, dúvida). **Nunca** é tratado como "sem débitos". |
 | `ERRO` | Falha inesperada na consulta. |
 
+**Cores da tabela de resultados:**
+
+| Cor | Onde | Significado |
+|-----|------|-------------|
+| **Vermelho escuro** | texto da coluna `Status` | `ERRO` — a consulta falhou; o item entra no Revisar. |
+| **Laranja** | texto da coluna `Status` | `NAO VERIFICADO` — o site não confirmou o resultado; também entra no Revisar. |
+| **Verde** | texto da coluna `Status` | `VERIFICADO` — consulta concluída. |
+| **Laranja/amarelo com faixas diagonais** | fundo da linha inteira | **Documento em revisão naquele instante** (faixa de “em obra”). Some quando a revisão passa para o próximo. Não é erro — é só destaque visual. |
+
 **Competência:** quando o site oferece o filtro **"Pesquisar por: competência /
 lançamento / vencimento"**, o programa escolhe **Competência** antes de
 consultar, para que o próprio site devolva a competência original do débito
