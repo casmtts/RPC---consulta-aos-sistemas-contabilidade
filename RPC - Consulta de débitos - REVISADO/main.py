@@ -2629,7 +2629,8 @@ class MainWindow(QMainWindow):
 
     @staticmethod
     def _pergunta_sim_nao(titulo: str, texto: str,
-                          padrao_sim: bool = False) -> bool:
+                          padrao_sim: bool = False,
+                          confirmar_nao: bool = False) -> bool:
         """Caixa de confirmação com botões explicitamente em português."""
         caixa = QMessageBox()
         caixa.setWindowTitle(titulo)
@@ -2639,7 +2640,29 @@ class MainWindow(QMainWindow):
         botao_nao = caixa.addButton("Não", QMessageBox.ButtonRole.NoRole)
         caixa.setDefaultButton(botao_sim if padrao_sim else botao_nao)
         caixa.exec()
-        return caixa.clickedButton() is botao_sim
+        if caixa.clickedButton() is botao_sim:
+            return True
+        if confirmar_nao:
+            # Confirmação extra para não descartar o progresso por engano.
+            confirma = QMessageBox()
+            confirma.setWindowTitle("Tem certeza?")
+            confirma.setText(
+                "Você escolheu NÃO continuar.\n\n"
+                "O progresso salvo será descartado e a consulta começará do "
+                "zero. Tem certeza?"
+            )
+            confirma.setIcon(QMessageBox.Icon.Warning)
+            botao_voltar = confirma.addButton(
+                "Voltar", QMessageBox.ButtonRole.NoRole
+            )
+            botao_descartar = confirma.addButton(
+                "Sim, descartar e começar do zero", QMessageBox.ButtonRole.YesRole
+            )
+            confirma.setDefaultButton(botao_voltar)
+            confirma.exec()
+            if confirma.clickedButton() is not botao_descartar:
+                return True  # voltou: mantém a retomada
+        return False
 
     # ---------- Tema ----------
 
@@ -2997,6 +3020,7 @@ class MainWindow(QMainWindow):
                 f"Deseja continuar? O registro {refazer} será consultado "
                 f"novamente{detalhe}.",
                 padrao_sim=True,
+                confirmar_nao=True,
             )
             if resposta:
                 indice_inicial = refazer - 1

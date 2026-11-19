@@ -1467,7 +1467,26 @@ class MainWindow(QMainWindow):
                 indice_inicial = progresso["processados"]
                 resultados_iniciais = progresso["resultados"]
             else:
-                salvar_progresso(arquivo_progresso, 0, len(self.registros), [])
+                # Confirmação extra: não descarta o progresso por um clique
+                # acidental no "Não" (que fica perto do "Sim").
+                confirma = QMessageBox(
+                    QMessageBox.Icon.Warning,
+                    "Tem certeza?",
+                    "Você escolheu NÃO continuar.\n\nO progresso salvo será "
+                    "descartado e a consulta começará do zero. Tem certeza?",
+                    QMessageBox.StandardButton.No | QMessageBox.StandardButton.Yes,
+                    self,
+                )
+                confirma.button(QMessageBox.StandardButton.Yes).setText(
+                    "Sim, descartar e começar do zero"
+                )
+                confirma.button(QMessageBox.StandardButton.No).setText("Voltar")
+                confirma.setDefaultButton(QMessageBox.StandardButton.No)
+                if confirma.exec() == QMessageBox.StandardButton.Yes:
+                    salvar_progresso(arquivo_progresso, 0, len(self.registros), [])
+                else:
+                    indice_inicial = progresso["processados"]
+                    resultados_iniciais = progresso["resultados"]
         elif progresso and progresso["processados"] >= len(self.registros):
             salvar_progresso(arquivo_progresso, 0, len(self.registros), [])
 

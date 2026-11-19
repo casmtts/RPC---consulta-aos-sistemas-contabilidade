@@ -189,7 +189,9 @@ Descrições especiais em `Tipo de Débito`:
   e o progresso é salvo.
 - **Retomar:** ao abrir, a última planilha é reaberta automaticamente e os
   resultados salvos aparecem na aba Resultados. Clicando em **Executar**, o
-  programa pergunta se deseja continuar. O último registro é sempre refeito.
+  programa pergunta se deseja continuar. Se você clicar em **Não**, aparece
+  uma confirmação **“Tem certeza?”** antes de descartar o progresso — o botão
+  **Voltar** mantém a retomada. O último registro é sempre refeito.
 - **Revisar:** disponível já na abertura (com planilha carregada). Após parar,
   consulta **somente o que falta** — registros sem resultado, itens
   `NÃO CONFIRMADO`, `NAO VERIFICADO` e erros. Débitos confirmados não são
