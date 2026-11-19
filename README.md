@@ -198,9 +198,12 @@ Descrições especiais em `Tipo de Débito`:
   repetidos. Se a revisão também for interrompida, um novo clique continua de
   onde parou.
 - **Revisão paralela:** marque **Revisar pendências em paralelo** na aba
-  Consulta. Ao clicar em **Executar**, um segundo worker reconfulta os itens
-  já pendentes (erro, `NAO VERIFICADO`, sem débitos) enquanto a consulta
-  principal varre o restante da planilha.
+  Consulta. A revisão começa **na hora em que você marca o checkbox**, mesmo
+  com a consulta já rodando — não é preciso parar e reiniciar. Se marcar antes
+  de **Executar**, ela inicia junto com a consulta. Um segundo worker reconfulta
+  os itens já pendentes (erro, `NAO VERIFICADO`, sem débitos) enquanto a
+  consulta principal varre o restante da planilha. Desmarcar o checkbox
+  interrompe a revisão (o progresso é mantido).
 
   - Os dois workers compartilham o mesmo `JSESSIONID` do navegador. Se
     consultassem o site ao mesmo tempo, a sessão JSF trocaria o contribuinte

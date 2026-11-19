@@ -1309,6 +1309,9 @@ class MainWindow(QMainWindow):
             "entram na tabela somente quando as duas consultas terminam."
         )
         execucao_layout.addWidget(self.campo_revisar_paralelo)
+        self.campo_revisar_paralelo.toggled.connect(
+            self._ao_alternar_revisao_paralela
+        )
         self.barra_progresso = QProgressBar()
         self.barra_progresso.setValue(0)
         execucao_layout.addWidget(self.barra_progresso)
@@ -1709,6 +1712,22 @@ class MainWindow(QMainWindow):
         }
         documentos.discard("")
         return documentos
+
+    def _ao_alternar_revisao_paralela(self, marcado: bool) -> None:
+        """ Liga/desliga a revisão paralela direto pelo checkbox."""
+        if marcado:
+            if self.worker_revisao is not None and self.worker_revisao.isRunning():
+                return
+            if self.worker is not None and self.worker.isRunning():
+                self._iniciar_revisao_paralela()
+                self._log("Revisão paralela iniciada pelo botão.")
+            else:
+                self._log(
+                    "Revisão paralela ativada — começará ao clicar em Executar."
+                )
+        elif self.worker_revisao is not None and self.worker_revisao.isRunning():
+            self.worker_revisao.stop()
+            self._log("Revisão paralela interrompida pelo botão.")
 
     def _iniciar_revisao_paralela(self, documentos: set[str] | None = None) -> None:
         """Revisa pendências em outro worker enquanto a consulta principal roda."""
