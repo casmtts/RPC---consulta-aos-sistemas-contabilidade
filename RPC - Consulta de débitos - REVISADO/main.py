@@ -427,6 +427,15 @@ def _cor_argb(cor: str) -> str:
     return texto
 
 
+def _ordenar_resultados(resultados: list[dict]) -> list[dict]:
+    """Ordena pela linha da planilha de entrada (ordem estável por devedor).
+
+    Sem isso, os itens vindos da revisão paralela entram no fim da lista e o
+    relatório não bate com a ordem da planilha enviada para análise.
+    """
+    return sorted(resultados, key=lambda item: int(item.get("_indice") or 0))
+
+
 def gravar_planilha(caminho: str, linhas: list[dict]) -> Path:
     """Grava o resultado em XLSX/CSV.
 
@@ -434,6 +443,7 @@ def gravar_planilha(caminho: str, linhas: list[dict]) -> Path:
     para a primeira, cinza-claro para a segunda, alternando a cada novo nome.
     Assim fica fácil separar visualmente os débitos de cada devedor.
     """
+    linhas = _ordenar_resultados(linhas)
     caminho = Path(caminho)
     if caminho.suffix.lower() in (".xlsx", ".xlsm"):
         from openpyxl import Workbook
@@ -2430,7 +2440,7 @@ class MainWindow(QMainWindow):
         resultados = list(progresso.get("resultados") or [])
         if not resultados:
             return
-        self.resultados = resultados
+        self.resultados = _ordenar_resultados(resultados)
         self.tabela_resultados.setRowCount(0)
         for item in self.resultados:
             self._inserir_linha_tabela(item)
@@ -3671,6 +3681,11 @@ class MainWindow(QMainWindow):
             self._ao_item(item)
         total = len(self.resultados_revisao)
         self.resultados_revisao = []
+        # Reordena pela planilha e reconstrói a tabela na ordem correta.
+        self.resultados = _ordenar_resultados(self.resultados)
+        self.tabela_resultados.setRowCount(0)
+        for item in self.resultados:
+            self._inserir_linha_tabela(item)
         # Persiste a mesclagem: os documentos revisados ficam de fora da
         # consulta principal e, sem isso, sumiriam do progresso ao reabrir.
         if self.caminho_entrada:

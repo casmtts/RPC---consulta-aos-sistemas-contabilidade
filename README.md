@@ -148,6 +148,11 @@ mesmo abaixo de títulos, e as abas são listadas para escolha.
 Colunas exportadas: **Nome, CPF, Tipo de Débito, Competência, Valor (R$),
 Status, CIF, ID Dívida, Vencimento e Erro**.
 
+As linhas são sempre ordenadas pela posição da guia na **planilha de entrada**
+(índice `_indice`), inclusive as que vêm da revisão paralela. Assim, o
+primeiro nome do relatório bate com o primeiro nome da planilha enviada para
+análise — a ordem não muda quando a revisão mescla seus resultados.
+
 | Status | Significado |
 |--------|-------------|
 | `VERIFICADO` | Consulta concluída com sucesso (com débitos ou "Sem débitos"). |

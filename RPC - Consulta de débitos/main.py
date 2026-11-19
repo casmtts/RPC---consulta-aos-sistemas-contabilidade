@@ -302,8 +302,14 @@ def ler_progresso(caminho: Path) -> dict | None:
         return None
 
 
+def _ordenar_resultados(resultados: list[dict]) -> list[dict]:
+    """Ordena pela linha da planilha de entrada (ordem estável)."""
+    return sorted(resultados, key=lambda item: int(item.get("_indice") or 0))
+
+
 def gravar_planilha(caminho: str, linhas: list[dict]) -> Path:
     """Grava o resultado em .xlsx ou .csv, com branco para com débitos e cinza para sem."""
+    linhas = _ordenar_resultados(linhas)
     caminho = Path(caminho)
     if caminho.suffix.lower() in (".xlsx", ".xlsm"):
         from openpyxl import Workbook
@@ -1270,7 +1276,7 @@ class MainWindow(QMainWindow):
         resultados = list(progresso.get("resultados") or [])
         if not resultados:
             return
-        self.resultados = resultados
+        self.resultados = _ordenar_resultados(resultados)
         self.tabela_resultados.setRowCount(0)
         for item in self.resultados:
             posicao = self.tabela_resultados.rowCount()
@@ -1961,6 +1967,11 @@ class MainWindow(QMainWindow):
             self._ao_item(item)
         total = len(self.resultados_revisao)
         self.resultados_revisao = []
+        # Reordena pela planilha e reconstrói a tabela na ordem correta.
+        self.resultados = _ordenar_resultados(self.resultados)
+        self.tabela_resultados.setRowCount(0)
+        for item in self.resultados:
+            self._inserir_linha_tabela(item)
         # Persiste a mesclagem no progresso para não perder resultados.
         if self.caminho_entrada:
             arquivo = _arquivo_progresso(self.caminho_entrada, "")
