@@ -292,6 +292,7 @@ scripts de análise.
 | `NAO VERIFICADO ... status 404` | Sessão/viewstate expirada: o programa já tenta 3x com token novo; se persistir, entre no sistema novamente e use **Revisar**. |
 | `página de erro (código 13429/13414)` | Mesmo tratamento acima: token renovado e consulta refeita automaticamente. |
 | `Botão 'Pesquisar' não encontrado` | O programa abre sessão nova e repete a consulta (até 3x). Se persistir, confira se a aba do sistema está logada no Brave. |
+| `O site está com o documento X, mas foi pedido Y` | O site re-renderizou o campo e restaurou um CPF anterior. O programa redigita o documento e confirma o valor antes de pesquisar; se ainda divergir, descarta o resultado (nunca aceita um débito de outro CPF). |
 | `Page.goto: net::ERR_ABORTED` | Navegação abortada também dispara nova tentativa com sessão nova. |
 | "Playwright Sync API inside the asyncio loop" | Corrigido: cada sessão roda em thread limpa. |
 | macOS não abre o `.app` | Botão direito → Abrir → Abrir (app assinado localmente, sem certificado Apple). |

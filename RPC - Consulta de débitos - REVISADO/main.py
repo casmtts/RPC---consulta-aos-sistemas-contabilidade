@@ -955,7 +955,13 @@ def _digitar_documento(pagina, seletor_documento: str, documento: str) -> None:
             campo.press("Backspace", timeout=5000)
             campo.press_sequentially(digitos, delay=20, timeout=10000)
             campo.press("Tab", timeout=5000)
-            return
+            # Confere se o valor digitado permaneceu: o PrimeFaces pode
+            # re-renderizar e restaurar um documento anterior da sessão.
+            valor = _valor_campo_js(pagina, seletor_documento)
+            if valor is None or "".join(c for c in valor if c.isdigit()) == digitos:
+                return
+            ultimo_erro = RuntimeError(f"campo ficou com {valor!r}")
+            pagina.wait_for_timeout(500)
         except Exception as exc:  # noqa: BLE001
             ultimo_erro = exc
             codigo = _erro_site(pagina)
@@ -1103,6 +1109,23 @@ def _aviso_expiracao(cookie: str) -> str | None:
             "mantenha a sessão ativa no navegador."
         )
     return None
+
+
+def _garantir_documento(pagina, seletor_documento: str, documento: str,
+                        deve_parar=None) -> None:
+    """Reafirma o documento depois dos filtros AJAX, antes de pesquisar.
+
+    O site pode re-renderizar o campo e restaurar o CPF de uma consulta
+    anterior; nesse caso o valor é digitado novamente.
+    """
+    digitos = "".join(caracter for caracter in documento if caracter.isdigit())
+    valor = _valor_campo_js(pagina, seletor_documento)
+    if valor is None:
+        return
+    if "".join(caracter for caracter in valor if caracter.isdigit()) == digitos:
+        return
+    _digitar_documento(pagina, seletor_documento, documento)
+    _esperar(pagina, 400, deve_parar)
 
 
 def consultar_debito(
@@ -1264,6 +1287,12 @@ def consultar_debito(
                 # Em "Informações do Débito", manter marcadas somente as
                 # situações de DÉBITO; pagas/canceladas ficam de fora.
                 _normalizar_situacao(pagina)
+                verificar_erro_site()
+
+                # Garante que o documento não foi trocado pelos AJAX acima.
+                _garantir_documento(
+                    pagina, seletor_documento, cpf, deve_parar
+                )
                 verificar_erro_site()
             except ErroSiteNaoVerificada:
                 raise
