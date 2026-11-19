@@ -1462,6 +1462,7 @@ class ConsultaWorker(QThread):
                  modo_revisao: bool = False, pausa: float = EXTRACTION_DELAY,
                  sem_navegador: bool = False, entrada: str = "", aba: str = "",
                  variar_pausa: bool = False, controle: dict | None = None,
+                 documentos_ignorar: set[str] | None = None,
                  parent=None):
         super().__init__(parent)
         self.entrada = entrada
@@ -1480,6 +1481,9 @@ class ConsultaWorker(QThread):
         # Dicionário compartilhado com a interface: permite alterar a pausa
         # DURANTE a execução, sem precisar consultar novamente.
         self.controle = controle if controle is not None else {}
+        # Documentos que ficam de fora desta execução porque a revisão
+        # paralela está cuidando deles (evita consultar o mesmo CPF 2x).
+        self.documentos_ignorar = documentos_ignorar or set()
         self._parar = False
 
     def stop(self) -> None:
@@ -1527,6 +1531,9 @@ class ConsultaWorker(QThread):
                 _campo(registro, "cpf") or _campo(registro, "cnpj")
                 or _campo(registro, "documento") or _campo(registro, "cif")
             )
+            # Na execução paralela, estes documentos ficam com a revisão.
+            if documento.strip() in self.documentos_ignorar:
+                continue
             nome = _campo(registro, "nome")
             tipo = _campo(registro, "tipo de pessoa") or _campo(registro, "tipo pessoa")
 
@@ -2976,6 +2983,11 @@ class MainWindow(QMainWindow):
         self.botao_escolher.setEnabled(False)
         self.botao_revisar.setEnabled(False)
 
+        # Na revisão paralela, estes documentos ficam só com o segundo worker.
+        documentos_revisao: set[str] = set()
+        if self.campo_revisar_paralelo.isChecked():
+            documentos_revisao = self._documentos_pendentes()
+
         self.worker = ConsultaWorker(
             self.registros,
             self.campo_cookie.text(),
@@ -2987,6 +2999,7 @@ class MainWindow(QMainWindow):
             pausa=self.campo_velocidade.value(),
             variar_pausa=self.campo_variar_pausa.isChecked(),
             controle=self.controle_consulta,
+            documentos_ignorar=documentos_revisao,
             entrada=entrada, aba=aba,
             parent=self,
         )
@@ -3005,7 +3018,7 @@ class MainWindow(QMainWindow):
             self._log(f"Iniciando consulta de {len(self.registros)} débito(s).")
 
         if self.campo_revisar_paralelo.isChecked():
-            self._iniciar_revisao_paralela()
+            self._iniciar_revisao_paralela(documentos_revisao)
 
     def parar(self) -> None:
         self._resetar_aviso_esc()
@@ -3138,16 +3151,22 @@ class MainWindow(QMainWindow):
             for campo in ("CIF", "ID Dívida", "Vencimento")
         )
 
-    def _iniciar_revisao_paralela(self) -> None:
-        """Revisa pendências em outro worker enquanto a consulta principal roda."""
-        if self.worker_revisao is not None and self.worker_revisao.isRunning():
-            return
+    def _documentos_pendentes(self) -> set[str]:
+        """Documentos com resultado que ainda precisa de revisão."""
         documentos = {
             str(r.get("CPF", "")).strip()
             for r in self.resultados
             if self._precisa_revisao(r)
         }
         documentos.discard("")
+        return documentos
+
+    def _iniciar_revisao_paralela(self, documentos: set[str] | None = None) -> None:
+        """Revisa pendências em outro worker enquanto a consulta principal roda."""
+        if self.worker_revisao is not None and self.worker_revisao.isRunning():
+            return
+        if documentos is None:
+            documentos = self._documentos_pendentes()
         if not documentos:
             self._log("Revisão paralela: não há pendências para revisar.")
             return

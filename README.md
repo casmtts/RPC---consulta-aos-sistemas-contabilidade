@@ -196,8 +196,11 @@ Descrições especiais em `Tipo de Débito`:
   Consulta. Ao clicar em **Executar**, um segundo worker reconfulta ao mesmo
   tempo os itens já pendentes (erro, `NAO VERIFICADO`, sem débitos). Os
   resultados revisados ficam isolados e só entram na tabela quando as duas
-  consultas terminam, evitando conflito entre elas. O **ESC 2x** / botão
-  **Parar** encerra as duas consultas.
+  consultas terminam, evitando conflito entre elas. Os documentos pendentes
+  são **excluídos da consulta principal** — o worker principal os ignora —,
+  então cada rotina atua num conjunto distinto de CPFs e nunca consulta o
+  mesmo documento ao mesmo tempo. O **ESC 2x** / botão **Parar** encerra as
+  duas consultas.
 
 ---
 
