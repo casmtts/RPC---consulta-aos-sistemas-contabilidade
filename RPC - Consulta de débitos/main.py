@@ -1670,7 +1670,7 @@ class MainWindow(QMainWindow):
                 if item is not None:
                     item.setData(_MARCA_REVISAO, True)
                     item.setBackground(pincel)
-                    item.setForeground(QBrush(QColor("#000000")))
+                    # Mantém a cor de texto do tema: preto some no tema escuro.
 
     def _desmarcar_em_revisao(self) -> None:
         """Restaura as cores normais das linhas que estavam em revisão."""
@@ -1700,6 +1700,12 @@ class MainWindow(QMainWindow):
                             item.setBackground(pincel)
                             item.setForeground(QBrush(QColor(PALETA["texto"])))
                     break
+            else:
+                cor_texto = QBrush(QColor(PALETA["texto"]))
+                for coluna in range(self.tabela_resultados.columnCount()):
+                    item = self.tabela_resultados.item(linha, coluna)
+                    if item is not None:
+                        item.setForeground(cor_texto)
         self._documentos_em_revisao.clear()
 
     def _documentos_pendentes(self) -> set[str]:
