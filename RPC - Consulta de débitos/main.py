@@ -1027,6 +1027,11 @@ class MainWindow(QMainWindow):
         self._timer_esc.setSingleShot(True)
         self._timer_esc.setInterval(3000)
         self._timer_esc.timeout.connect(self._resetar_aviso_esc)
+        # Pisca o botão Parar enquanto o aviso do ESC estiver ativo.
+        self._esc_pisca_aceso = True
+        self._timer_pisca_esc = QTimer(self)
+        self._timer_pisca_esc.setInterval(350)
+        self._timer_pisca_esc.timeout.connect(self._piscar_aviso_esc)
 
         # Renovação preventiva: relê o token do Brave a cada 2 minutos e
         # avisa se ele estiver perto de vencer.
@@ -1049,8 +1054,10 @@ class MainWindow(QMainWindow):
 
         if not self._esc_armado:
             self._esc_armado = True
-            self._mostrar_aviso_esc(True)
+            self._esc_pisca_aceso = True
+            self._mostrar_aviso_esc(True, True)
             self._timer_esc.start()
+            self._timer_pisca_esc.start()
             self.statusBar().showMessage(
                 "Pressione ESC novamente para parar as consultas."
             )
@@ -1061,14 +1068,21 @@ class MainWindow(QMainWindow):
         self._resetar_aviso_esc()
         self.parar()
 
-    def _mostrar_aviso_esc(self, ativo: bool) -> None:
+    def _mostrar_aviso_esc(self, ativo: bool, aceso: bool = True) -> None:
         """Realça (ou restaura) os controles de parada no aviso do ESC."""
         if ativo:
-            estilo_botao = (
-                "QPushButton { background: #B71C1C; color: #FFFFFF; "
-                "font-weight: 600; border: 1px solid #7F0000; "
-                "border-radius: 6px; padding: 4px 10px; }"
-            )
+            if aceso:
+                estilo_botao = (
+                    "QPushButton { background: #B71C1C; color: #FFFFFF; "
+                    "font-weight: 600; border: 1px solid #7F0000; "
+                    "border-radius: 6px; padding: 4px 10px; }"
+                )
+            else:
+                estilo_botao = (
+                    "QPushButton { background: #FF8C00; color: #000000; "
+                    "font-weight: 600; border: 1px solid #B36300; "
+                    "border-radius: 6px; padding: 4px 10px; }"
+                )
             estilo_etiqueta = "QLabel { color: #D32F2F; font-weight: 700; }"
             texto = "ESC NOVAMENTE PARA PARAR"
         else:
@@ -1082,10 +1096,16 @@ class MainWindow(QMainWindow):
             etiqueta.setStyleSheet(estilo_etiqueta)
             etiqueta.setText(texto)
 
+    def _piscar_aviso_esc(self) -> None:
+        """Alterna a cor do botão Parar enquanto o aviso do ESC está ativo."""
+        self._esc_pisca_aceso = not getattr(self, "_esc_pisca_aceso", True)
+        self._mostrar_aviso_esc(True, self._esc_pisca_aceso)
+
     def _resetar_aviso_esc(self) -> None:
         """Cancela o aviso do ESC e devolve os controles ao visual normal."""
         self._esc_armado = False
         self._timer_esc.stop()
+        self._timer_pisca_esc.stop()
         self._mostrar_aviso_esc(False)
 
     @staticmethod

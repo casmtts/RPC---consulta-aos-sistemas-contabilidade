@@ -254,7 +254,8 @@ Erros conhecidos tratados com retry: **HTTP 404** e **página de erro
 
 - Botão no canto superior direito alterna **claro/escuro**; a preferência fica
   salva. Tema escuro: preto, detalhes laranja e letras brancas.
-- **ESC 2x** — parar consultas (1º aperto avisa mudando a cor; 2º executa).
+- **ESC 2x** — parar consultas (1º aperto faz o botão **Parar** piscar em
+  laranja/vermelho; 2º executa a parada).
 - **Ambiente → Atualizar cookies** — relê manualmente JWT e JSESSIONID do Brave.
 
 ---
