@@ -33,6 +33,7 @@ from PyQt6.QtWidgets import (
     QPlainTextEdit,
     QProgressBar,
     QPushButton,
+    QScrollArea,
     QStatusBar,
     QTabWidget,
     QTableWidget,
@@ -1165,7 +1166,13 @@ class MainWindow(QMainWindow):
 
         # --- Aba Consulta ---
         aba_consulta = QWidget()
-        consulta_layout = QVBoxLayout(aba_consulta)
+        consulta_scroll = QScrollArea(aba_consulta)
+        consulta_scroll.setWidgetResizable(True)
+        consulta_conteudo = QWidget()
+        consulta_layout = QVBoxLayout(consulta_conteudo)
+        consulta_scroll.setWidget(consulta_conteudo)
+        layout_aba_consulta = QVBoxLayout(aba_consulta)
+        layout_aba_consulta.addWidget(consulta_scroll)
 
         grupo_entrada = QGroupBox("Planilha de entrada")
         entrada_layout = QVBoxLayout(grupo_entrada)
