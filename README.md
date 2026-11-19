@@ -184,6 +184,12 @@ Descrições especiais em `Tipo de Débito`:
   `NÃO CONFIRMADO`, `NAO VERIFICADO` e erros. Débitos confirmados não são
   repetidos. Se a revisão também for interrompida, um novo clique continua de
   onde parou.
+- **Revisão paralela:** marque **Revisar pendências em paralelo** na aba
+  Consulta. Ao clicar em **Executar**, um segundo worker reconfulta ao mesmo
+  tempo os itens já pendentes (erro, `NAO VERIFICADO`, sem débitos). Os
+  resultados revisados ficam isolados e só entram na tabela quando as duas
+  consultas terminam, evitando conflito entre elas. O **ESC 2x** / botão
+  **Parar** encerra as duas consultas.
 
 ---
 

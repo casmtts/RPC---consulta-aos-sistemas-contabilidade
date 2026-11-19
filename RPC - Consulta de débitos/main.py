@@ -939,6 +939,10 @@ class MainWindow(QMainWindow):
         self._consulta_interrompida = False
         self._registros_revisao: list[dict] = []
         self._revisao_concluida: set[str] = set()
+        # Revisão em paralelo: worker e resultados isolados até a mesclagem.
+        self.worker_revisao: ConsultaWorker | None = None
+        self.resultados_revisao: list[dict] = []
+        self._revisao_paralela_ativa = False
         self.worker: ConsultaWorker | None = None
 
         self._montar_interface()
@@ -1041,7 +1045,10 @@ class MainWindow(QMainWindow):
         """Habilita Revisar assim que houver planilha ou resultados carregados."""
         if not hasattr(self, "botao_revisar"):
             return
-        rodando = self.worker is not None and self.worker.isRunning()
+        rodando = (
+            (self.worker is not None and self.worker.isRunning())
+            or self._revisao_paralela_ativa
+        )
         self.botao_revisar.setEnabled(
             not rodando and (bool(self.registros) or bool(self.resultados))
         )
@@ -1148,6 +1155,15 @@ class MainWindow(QMainWindow):
         linha_botoes.addStretch()
         linha_botoes.addWidget(self.botao_salvar)
         execucao_layout.addLayout(linha_botoes)
+        self.campo_revisar_paralelo = QCheckBox(
+            "Revisar pendências em paralelo (segunda consulta)"
+        )
+        self.campo_revisar_paralelo.setToolTip(
+            "Enquanto a consulta principal roda, reconfulta em paralelo os itens "
+            "com erro, NAO VERIFICADO ou 'Sem débitos'. Os resultados revisados "
+            "entram na tabela somente quando as duas consultas terminam."
+        )
+        execucao_layout.addWidget(self.campo_revisar_paralelo)
         self.barra_progresso = QProgressBar()
         self.barra_progresso.setValue(0)
         execucao_layout.addWidget(self.barra_progresso)
@@ -1396,9 +1412,15 @@ class MainWindow(QMainWindow):
         else:
             self._log(f"Iniciando consulta de {len(self.registros)} débito(s).")
 
+        if self.campo_revisar_paralelo.isChecked():
+            self._iniciar_revisao_paralela()
+
     def parar(self) -> None:
         self._resetar_aviso_esc()
         self._consulta_interrompida = True
+        if self.worker_revisao is not None and self.worker_revisao.isRunning():
+            self.worker_revisao.stop()
+            self._log("Parada solicitada na revisão paralela.")
         if self.worker is not None:
             self.worker.stop()
             self.label_status.setText("Parando após o item atual...")
@@ -1437,9 +1459,95 @@ class MainWindow(QMainWindow):
             self.resultados.append(item)
             self._ao_item(item)
 
+    def _iniciar_revisao_paralela(self) -> None:
+        """Revisa pendências em outro worker enquanto a consulta principal roda."""
+        if self.worker_revisao is not None and self.worker_revisao.isRunning():
+            return
+        documentos = {
+            str(r.get("CPF", "")).strip()
+            for r in self.resultados
+            if str(r.get("Status", "")).strip().upper() not in ("OK", "VERIFICADO")
+            or "sem débitos" in str(r.get("Tipo de Débito", "")).lower()
+        }
+        documentos.discard("")
+        if not documentos:
+            self._log("Revisão paralela: não há pendências para revisar.")
+            return
+        registros = [
+            r for r in self.registros
+            if self._documento_registro(r) in documentos
+        ]
+        if not registros:
+            self._log("Revisão paralela: registros originais não encontrados.")
+            return
+
+        self.resultados_revisao = []
+        self.worker_revisao = ConsultaWorker(
+            registros,
+            self.campo_cookie.text(),
+            cookie_sessao=self.cookie_sessao,
+            modo_revisao=True,
+            parent=self,
+        )
+        self.worker_revisao.documento_revisado.connect(
+            self._ao_documento_revisado_paralelo
+        )
+        self.worker_revisao.finalizado.connect(self._ao_finalizar_revisao_paralela)
+        self.worker_revisao.finished.connect(self._limpar_worker_revisao)
+        self.worker_revisao.aviso.connect(self._log)
+        self._revisao_paralela_ativa = True
+        self.botao_revisar.setEnabled(False)
+        self.worker_revisao.start()
+        self._log(f"Revisão paralela iniciada: {len(registros)} pendente(s).")
+
+    def _ao_documento_revisado_paralelo(self, documento: str, novos: list[dict]) -> None:
+        """Guarda a revisão paralela à parte; a tabela só muda na mesclagem."""
+        self.resultados_revisao.extend(novos)
+
+    def _ao_finalizar_revisao_paralela(self, mensagem: str) -> None:
+        self._log(f"Revisão paralela: {mensagem}")
+        self._revisao_paralela_ativa = False
+        self._mesclar_revisao_paralela()
+
+    def _limpar_worker_revisao(self) -> None:
+        self.worker_revisao = None
+
+    def _mesclar_revisao_paralela(self) -> None:
+        """Aplica ao resultado final o que foi revisado em paralelo."""
+        if not self.resultados_revisao:
+            self._atualizar_botao_revisar()
+            return
+        if self.worker is not None and self.worker.isRunning():
+            return
+        documentos = {
+            str(item.get("CPF", "")).strip()
+            for item in self.resultados_revisao
+            if str(item.get("CPF", "")).strip()
+        }
+        for documento in documentos:
+            for linha in range(self.tabela_resultados.rowCount() - 1, -1, -1):
+                celula = self.tabela_resultados.item(
+                    linha, COLUNAS_SAIDA.index("CPF")
+                )
+                if celula is not None and celula.text().strip() == documento:
+                    self.tabela_resultados.removeRow(linha)
+            self.resultados = [
+                r for r in self.resultados
+                if str(r.get("CPF", "")).strip() != documento
+            ]
+        for item in self.resultados_revisao:
+            self._ao_item(item)
+        total = len(self.resultados_revisao)
+        self.resultados_revisao = []
+        self._log(f"Revisão paralela mesclada: {total} linha(s) atualizada(s).")
+        self.botao_salvar.setEnabled(bool(self.resultados))
+        self._atualizar_botao_revisar()
+
     def revisar(self) -> None:
         """Após uma parada, consulta só o que falta; senão, os itens pendentes."""
         if self.worker is not None and self.worker.isRunning():
+            return
+        if self.worker_revisao is not None and self.worker_revisao.isRunning():
             return
 
         continuar = self._consulta_interrompida
@@ -1573,6 +1681,9 @@ class MainWindow(QMainWindow):
                 self._log(aviso)
         if "interrompido" in mensagem.lower() and self.resultados:
             self._salvar_automatico(parcial=True)
+        # Mescla a revisão paralela quando as duas consultas terminaram.
+        if self.resultados_revisao and not self._revisao_paralela_ativa:
+            self._mesclar_revisao_paralela()
         if "Concluído" in mensagem and self.caminho_entrada:
             arquivo = _arquivo_progresso(
                 self.caminho_entrada,
@@ -1638,6 +1749,9 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(f"Resultado salvo em: {destino}")
 
     def closeEvent(self, event) -> None:  # noqa: N802
+        if self.worker_revisao is not None and self.worker_revisao.isRunning():
+            self.worker_revisao.stop()
+            self.worker_revisao.wait(3000)
         if self.worker is not None and self.worker.isRunning():
             self.worker.stop()
             self.worker.wait(3000)
