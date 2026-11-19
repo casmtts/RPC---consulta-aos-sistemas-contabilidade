@@ -216,7 +216,10 @@ Descrições especiais em `Tipo de Débito`:
   revisar*, que explica quando não há itens pendentes para a segunda consulta.
   O **ESC 2x** / botão **Parar** encerra as duas consultas. Os resultados da
   revisão são gravados de volta no arquivo de progresso na mesclagem, para
-  que nenhuma linha desapareça ao reabrir o programa.
+  que nenhuma linha desapareça ao reabrir o programa. A revisão paralela tem
+  **progresso próprio** (arquivo `_revisao_progresso.json`): se for
+  interrompida, retoma de onde parou na próxima execução, sem recomeçar do
+  primeiro pendente. Ao concluir, esse arquivo é removido.
 
 ---
 

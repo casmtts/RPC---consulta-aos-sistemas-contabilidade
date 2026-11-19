@@ -254,6 +254,13 @@ def _arquivo_progresso(caminho_entrada: Path, aba: str = "") -> Path:
     )
 
 
+def _arquivo_progresso_revisao(caminho_entrada: Path, aba: str = "") -> Path:
+    """Progresso exclusivo da revisão paralela."""
+    return caminho_entrada.with_name(
+        f"{caminho_entrada.stem}_revisao_progresso.json"
+    )
+
+
 def _pasta_relatorios() -> Path:
     """Pasta 'relatorios' dentro da pasta do programa (criada se preciso)."""
     pasta = Path(__file__).resolve().parent / "relatorios"
@@ -1050,6 +1057,7 @@ class MainWindow(QMainWindow):
         # Revisão em paralelo: worker e resultados isolados até a mesclagem.
         self.worker_revisao: ConsultaWorker | None = None
         self.resultados_revisao: list[dict] = []
+        self._total_revisao = 0
         self._revisao_paralela_ativa = False
         self._documentos_em_revisao: set[str] = set()
         self.worker: ConsultaWorker | None = None
@@ -1599,6 +1607,13 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(mensagem)
 
     def _ao_progresso_revisao(self, percentual: int, mensagem: str) -> None:
+        if self._total_revisao:
+            feitos = len({
+                str(r.get("CPF", "")).strip()
+                for r in self.resultados_revisao
+                if str(r.get("CPF", "")).strip()
+            })
+            mensagem = f"Processado {feitos}/{self._total_revisao}"
         self.label_revisao_paralela.setText(f"Revisão paralela: {mensagem}")
 
     def _ao_item(self, item: dict) -> None:
@@ -1705,6 +1720,36 @@ class MainWindow(QMainWindow):
             )
             self._log("Revisão paralela: não há pendências para revisar.")
             return
+
+        # Retoma a revisão pelo progresso salvo, sem recomeçar do primeiro.
+        self.resultados_revisao = []
+        total_documentos = len(documentos)
+        if self.caminho_entrada:
+            arquivo_rev = _arquivo_progresso_revisao(self.caminho_entrada, "")
+            progresso_rev = (
+                ler_progresso(arquivo_rev) if arquivo_rev.exists() else None
+            )
+            if progresso_rev:
+                ja_revisados = {
+                    str(r.get("CPF", "")).strip()
+                    for r in (progresso_rev.get("resultados") or [])
+                    if str(r.get("CPF", "")).strip()
+                }
+                if ja_revisados:
+                    self.resultados_revisao = list(
+                        progresso_rev.get("resultados") or []
+                    )
+                    documentos = documentos - ja_revisados
+                    self._log(
+                        "Revisão paralela retomada: "
+                        f"{len(ja_revisados)} documento(s) já revisado(s)."
+                    )
+        self._total_revisao = total_documentos
+        if not documentos:
+            self.label_revisao_paralela.setText("Revisão paralela: tudo já revisado")
+            self._log("Revisão paralela: nada a fazer (progresso já completo).")
+            return
+
         registros = [
             r for r in self.registros
             if self._documento_registro(r) in documentos
@@ -1717,7 +1762,6 @@ class MainWindow(QMainWindow):
             return
 
         self._marcar_em_revisao(documentos)
-        self.resultados_revisao = []
         self.worker_revisao = ConsultaWorker(
             registros,
             self.campo_cookie.text(),
@@ -1744,8 +1788,23 @@ class MainWindow(QMainWindow):
         self._log(f"Revisão paralela iniciada: {len(registros)} pendente(s).")
 
     def _ao_documento_revisado_paralelo(self, documento: str, novos: list[dict]) -> None:
-        """Guarda a revisão paralela à parte; a tabela só muda na mesclagem."""
+        """Guarda a revisão paralela à parte e salva seu progresso."""
         self.resultados_revisao.extend(novos)
+        self._salvar_progresso_revisao()
+
+    def _salvar_progresso_revisao(self) -> None:
+        """Persiste o andamento da revisão para retomar sem recomeçar."""
+        if not self.caminho_entrada or not self._total_revisao:
+            return
+        arquivo = _arquivo_progresso_revisao(self.caminho_entrada, "")
+        feitos = {
+            str(r.get("CPF", "")).strip()
+            for r in self.resultados_revisao
+            if str(r.get("CPF", "")).strip()
+        }
+        salvar_progresso(
+            arquivo, len(feitos), self._total_revisao, self.resultados_revisao
+        )
 
     def _ao_finalizar_revisao_paralela(self, mensagem: str) -> None:
         self._log(f"Revisão paralela: {mensagem}")
@@ -1754,6 +1813,15 @@ class MainWindow(QMainWindow):
             else "Revisão paralela: concluída"
         )
         self._revisao_paralela_ativa = False
+        if self.caminho_entrada:
+            arquivo_rev = _arquivo_progresso_revisao(self.caminho_entrada, "")
+            if "interrompido" in mensagem.lower():
+                self._salvar_progresso_revisao()
+            elif arquivo_rev.exists():
+                try:
+                    arquivo_rev.unlink()
+                except Exception:  # noqa: BLE001
+                    pass
         self._mesclar_revisao_paralela()
         self._desmarcar_em_revisao()
 
