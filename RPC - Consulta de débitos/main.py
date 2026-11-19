@@ -63,6 +63,10 @@ SEPARADOR_CSV = ";"
 # Pincel em cache para destacar linhas que estão sendo revisadas.
 _PINCEL_REVISAO: QBrush | None = None
 
+# Consulta principal e revisão paralela compartilham o JSESSIONID do Brave:
+# o acesso ao site precisa ser serializado para não trocar o contribuinte.
+_SESSAO_SITE_LOCK = threading.Lock()
+
 StatusConsulta = {
     "PENDENTE": "pendente",
     "PROCESSANDO": "processando",
@@ -894,11 +898,12 @@ class ConsultaWorker(QThread):
                             self.cookie, self.cookie_sessao
                         )
                     try:
-                        debitos = _executar_com_playwright(
-                            consultar_debito,
-                            documento, nome, self.cookie, self.timeout, tipo,
-                            self.cookie_sessao,
-                        )
+                        with _SESSAO_SITE_LOCK:
+                            debitos = _executar_com_playwright(
+                                consultar_debito,
+                                documento, nome, self.cookie, self.timeout, tipo,
+                                self.cookie_sessao,
+                            )
                         break
                     except ConsultaNaoVerificada as exc:
                         mensagem = str(exc).lower()

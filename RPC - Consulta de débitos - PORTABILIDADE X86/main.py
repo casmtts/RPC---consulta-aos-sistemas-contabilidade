@@ -96,6 +96,11 @@ SEPARADOR_CSV = ";"
 # Pincel em cache para destacar linhas que estão sendo revisadas.
 _PINCEL_REVISAO: QBrush | None = None
 
+# Os dois workers (consulta principal e revisão paralela) usam o MESMO
+# JSESSIONID do Brave. Se consultarem ao mesmo tempo, a sessão JSF do site
+# troca o contribuinte selecionado e um vê o documento do outro.
+_SESSAO_SITE_LOCK = threading.Lock()
+
 
 # ============================================================
 # Planilhas
@@ -1624,11 +1629,12 @@ class ConsultaWorker(QThread):
             try:
                 sem_confirmacao: list[bool] = []
                 if self.sem_navegador:
-                    debitos = consultar_debito_http(
-                        documento, nome, self.cookie, self.cookie_sessao,
-                        self.timeout, tipo,
-                        deve_parar=self.parar_solicitado,
-                    )
+                    with _SESSAO_SITE_LOCK:
+                        debitos = consultar_debito_http(
+                            documento, nome, self.cookie, self.cookie_sessao,
+                            self.timeout, tipo,
+                            deve_parar=self.parar_solicitado,
+                        )
                 else:
                     # 404 e a página de erro do site (ex.: código 13429)
                     # normalmente são viewstate/sessão expirada: renova os
@@ -1645,13 +1651,14 @@ class ConsultaWorker(QThread):
                             except Exception:  # noqa: BLE001
                                 pass
                         try:
-                            debitos = _executar_com_playwright(
-                                consultar_debito,
-                                documento, nome, self.cookie, self.timeout,
-                                tipo, self.cookie_sessao,
-                                deve_parar=self.parar_solicitado,
-                                sem_confirmacao=sem_confirmacao,
-                            )
+                            with _SESSAO_SITE_LOCK:
+                                debitos = _executar_com_playwright(
+                                    consultar_debito,
+                                    documento, nome, self.cookie, self.timeout,
+                                    tipo, self.cookie_sessao,
+                                    deve_parar=self.parar_solicitado,
+                                    sem_confirmacao=sem_confirmacao,
+                                )
                             if (
                                 debitos
                                 and any(

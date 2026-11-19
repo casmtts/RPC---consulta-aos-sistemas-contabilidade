@@ -204,7 +204,12 @@ Descrições especiais em `Tipo de Débito`:
   consultas terminam, evitando conflito entre elas. Os documentos pendentes
   são **excluídos da consulta principal** — o worker principal os ignora —,
   então cada rotina atua num conjunto distinto de CPFs e nunca consulta o
-  mesmo documento ao mesmo tempo. As linhas em revisão aparecem com **fundo
+  mesmo documento ao mesmo tempo. **Importante:** os dois workers usam o
+  mesmo `JSESSIONID` do Brave; se consultassem o site simultaneamente, a sessão
+  JSF trocaria o contribuinte selecionado e um veria o documento do outro
+  (erros “o site está com o documento X, mas foi pedido Y”). Por isso o acesso
+  ao site é **serializado por um lock**: as duas rotinas andam no mesmo
+  processo, mas nunca pisam no site ao mesmo tempo. As linhas em revisão aparecem com **fundo
   laranja de faixas diagonais** (aspecto de “em obra”) e voltam às cores
   normais quando a revisão termina. O andamento aparece no rótulo **Revisão
   paralela: ...** na aba Consulta — inclusive a mensagem *sem pendências para
