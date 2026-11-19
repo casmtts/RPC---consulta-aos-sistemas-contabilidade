@@ -70,6 +70,18 @@ consultar situação cadastral de CNPJ ( BrasilAPI / ReceitaWS ), em GUI e termi
 Saídas incluem `CIF`, `ID Dívida` e `Vencimento`, para identificar, por
 exemplo, qual imóvel (CIF) está devendo IPTU.
 
+**Débitos do sistema legado (CPFs fictícios):**
+
+- Os débitos são lidos do CSV `relatorio-lancamentos-debito-divida-ativa-*.csv`
+  (procurado na pasta do programa, na pasta pai ou no diretório atual). O
+  arquivo **não é versionado**, por conter dados.
+- Cada débito vira uma linha `VERIFICADO` com tipo, exercício, valor
+  **atualizado**, CIF, número do débito e vencimento.
+- O campo `Erro` registra a origem: *“Débito localizado no relatório antigo
+  (sistema legado)”* — assim o gestor sabe que veio do legado, e não do site.
+- Se o CPF não estiver nesse relatório, recebe `DOCUMENTO INVÁLIDO` e não
+  entra no Revisar (refazer a consulta não resolveria).
+
 ---
 
 ## Requisitos
