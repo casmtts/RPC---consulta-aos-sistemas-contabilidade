@@ -817,6 +817,12 @@ class ConsultaWorker(QThread):
             if not tipo and _campo(registro, "cnpj"):
                 tipo = "JURIDICA"
             rotulo = nome or documento or f"linha {indice}"
+            # Competência da época: prioriza a planilha de entrada.
+            competencia_original = (
+                _campo(registro, "competencia debito")
+                or _campo(registro, "competencia guia")
+                or _campo(registro, "competencia")
+            )
             self.progresso.emit(
                 int((indice - 1) * 100 / total), f"Consultando {indice}/{total}: {rotulo}"
             )
@@ -864,7 +870,7 @@ class ConsultaWorker(QThread):
                 if not debitos:
                     novos = [{
                         "Nome": nome, "CPF": documento,
-                        "Tipo de Débito": "Sem débitos (confirmado)", "Competência": "-",
+                        "Tipo de Débito": "Sem débitos (confirmado)", "Competência": competencia_original or "-",
                         "Valor (R$)": "0,00", "Status": "VERIFICADO", "Erro": "",
                     }]
                 else:
@@ -874,7 +880,8 @@ class ConsultaWorker(QThread):
                             "Tipo de Débito": _tipo_debito_com_migracao(
                                 debito["tipo_debito"], registro
                             ),
-                            "Competência": debito["competencia"],
+                            "Competência": competencia_original or debito["competencia"],
+                            "_competencia_site": debito["competencia"],
                             "Valor (R$)": f"{debito['valor']:.2f}".replace(".", ","),
                             "Status": "VERIFICADO", "Erro": "",
                         }
@@ -886,14 +893,14 @@ class ConsultaWorker(QThread):
                 erros += 1
                 self._publicar(documento, [{
                     "Nome": nome, "CPF": documento,
-                    "Tipo de Débito": "-", "Competência": "-",
+                    "Tipo de Débito": "-", "Competência": competencia_original or "-",
                     "Valor (R$)": "0,00", "Status": "NAO VERIFICADO", "Erro": str(exc),
                 }])
             except Exception as exc:  # noqa: BLE001
                 erros += 1
                 self._publicar(documento, [{
                     "Nome": nome, "CPF": documento,
-                    "Tipo de Débito": "-", "Competência": "-",
+                    "Tipo de Débito": "-", "Competência": competencia_original or "-",
                     "Valor (R$)": "0,00", "Status": "ERRO", "Erro": str(exc),
                 }])
 

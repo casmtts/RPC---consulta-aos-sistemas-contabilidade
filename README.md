@@ -154,6 +154,13 @@ Status, CIF, ID Dívida, Vencimento e Erro**.
 | `NAO VERIFICADO` | O site não permitiu confirmar o resultado (erro de sessão, 404, página de erro, dúvida). **Nunca** é tratado como "sem débitos". |
 | `ERRO` | Falha inesperada na consulta. |
 
+**Competência:** o programa usa a **competência da época**, lida da planilha
+de entrada (colunas `Competência Débito` ou `Competência Guia`, ex.: `fev/22`),
+em vez da competência de referência da cobrança atual informada pelo site
+(ex.: `1/2026`). Se a planilha não tiver essa coluna, mantém o valor do site.
+O valor original do site fica guardado internamente como `_competencia_site`
+para auditoria, mas não aparece na planilha entregue.
+
 Os relatórios — tanto o **salvo automaticamente** ao parar quanto o gerado
 pelo botão **Salvar resultado...** — são gravados na pasta **`relatorios/`**,
 criada automaticamente dentro da pasta do programa. A planilha de entrada e o
