@@ -1,0 +1,509 @@
+# NOTA DE REVISÃO - BUGS E PROBLEMAS NOS ARQUIVOS PYTHON
+
+## Resumo Geral
+Após revisar os arquivos Python da pasta "RPC - Consulta de débitos", identifiquei os seguintes problemas:
+
+---
+
+## 1. BUG CRÍTICO: Importação de módulo `scraper` incorreta
+
+### Arquivos afetados:
+- `analisar_cookie.py` (linha 8)
+- `analyze.py` (linha 12)
+- `test_sample.py` (linha 9)
+
+### Problema:
+```python
+from scraper.scraper import DebitorScraper
+```
+
+### Análise:
+O caminho correto para o módulo é:
+```
+/Users/casmtts/Documents/TRIBUTOS E TERRA/RPC - Consulta de débitos/scraper/scraper.py
+```
+
+As importações devem ser:
+```python
+from scraper.scraper import DebitorScraper  # ❌ INCORRETO
+# OU
+from scraper.scraper import DebitorScraper  # ✅ CORRETO (se scraper.py estiver no path)
+```
+
+### Solução:
+O módulo `scraper` é uma subpasta (`scraper/scraper.py`). A importação `from scraper.scraper import DebitorScraper` só funcionará se:
+1. O módulo `scraper.py` estiver no diretório raiz (não é o caso)
+2. O diretório `scraper` esteja no `PYTHONPATH`
+
+**Recomendação:** Alterar para:
+```python
+from scraper.scraper import DebitorScraper
+```
+E garantir que:
+```python
+import sys
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+```
+Este código já está presente em `main.py` (linha 41), mas **NÃO** está em:
+- `analisar_cookie.py`
+- `analyze.py`
+- `test_sample.py`
+
+**Severidade: ALTA** - As importações falharão sem esta correção.
+
+---
+
+## 2. BUG: Missing `sys.path` em scripts que importam de subpastas
+
+### Arquivos afetados:
+- `analisar_cookie.py`
+- `analyze.py`
+- `test_sample.py`
+
+### Problema:
+Estes arquivos tentam importar de `scraper.scraper`, mas não ajustam o `sys.path`.
+
+### Solução:
+Adicionar no topo de cada arquivo:
+```python
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+```
+
+---
+
+## 3. BUG: Inconsistência na estrutura de pastas
+
+### Problema:
+Existe uma pasta `scraper/` com arquivo `scraper.py`:
+```
+RPC - Consulta de débitos/
+├── scraper/
+│   └── scraper.py
+├── main.py
+├── analisar_cookie.py
+├── analyze.py
+└── ...
+```
+
+### Problema:
+Nomes de arquivo inconsistentes:
+- `analyze.py` (em inglês)
+- `analisar_cookie.py` (em português)
+- `VERIFICAR_ESTRUTURA.py` (em maiúsculas)
+
+### Solução:
+Padronizar nomes dos arquivos em português:
+- `analyze.py` → `analisar_estrutura.py`
+- `VERIFICAR_ESTRUTURA.py` → `verificar_strutura.py`
+
+---
+
+## 4. BUG: Dependência de modules não existentes
+
+### Arquivo: `scraper/scraper.py`
+
+### Problema:
+A classe `DebitorScraper` chama métodos que dependem de configurações não inicializadas:
+
+```python
+time.sleep(self.extraction_timeout)  # Linha 122
+```
+
+Mas no `__init__` a variável é:
+```python
+self.extraction_timeout = None  # Nunca é definida!
+```
+
+### Solução:
+No `__init__`, definir:
+```python
+self.extraction_timeout = EXTRACTION_DELAY  # Usar valor do config.py
+```
+
+---
+
+## 5. BUG: Lógica de preenchimento de formulário (scraper/scraper.py)
+
+### Problema:
+O método `_preencher_formulario` tentaprimeiro` tenta preencher o campo CPF, mas o código assume que o campo existe:
+
+```python
+# Linha 156 - Tenta encontrar por ID
+cpf_input = page.query_selector("input[id*='cpf']")
+if cpf_input:
+    cpf_input.fill(cpf)
+    print(f"  CPF preenchido (via id*='cpf'): {cpf}")
+else:
+    print(f"  ⚠️  Campo CPF não encontrado")  # ⚠️ PROBLEMA: Continua sem preencher!
+```
+
+Se o campo não for encontrado, o código **continua** tentando preencher (linhas 168-187), o que pode falhar.
+
+### Solução:
+Adicionar `return` após falha:
+```python
+else:
+    raise Exception(f"Campo CPF não encontrado na página")
+```
+
+---
+
+## 6. BUG: Tratamento de tabelas (scraper/scraper.py)
+
+### Problema:
+No método `_extrair_dados_tabela`, a lógica é confusa:
+
+```python
+for cell in cells:
+    text = self._get_text_element(cell)
+    if text:
+        # Encontrar índice da coluna
+        col_index = cabecalho.index(text.strip()) if text.strip() in cabecalho else -1
+        if col_index >= 0:
+            dados[col_index] = text.strip()
+```
+
+**Problema:** `cabecalho.index(text.strip())` levantará `ValueError` se `text.strip()` não estiver em `cabecalho`.
+
+### Solução:
+```python
+col_index = -1
+if text.strip() in cabecalho:
+    col_index = cabecalho.index(text.strip())
+if col_index >= 0:
+    dados[col_index] = text.strip()
+```
+
+---
+
+## 7. BUG: Inicialização de variáveis em `scraper/scraper.py`
+
+### Problema:
+Algumas variáveis de instância são usadas antes de serem definidas:
+
+```python
+def consultar_debito(self, cpf: str, nome: str, timeout: int = None) -> List[Dict]:
+    # ...
+    time.sleep(self.extraction_timeout)  # ❌ extraction_timeout não é atributo, é variável local
+    # ...
+    time.sleep(self.extraction_timeout)  # ❌ Novamente, falhará
+```
+
+### Solução:
+No `__init__`:
+```python
+self.extraction_timeout = 1.5  # ou usar self.timeout
+```
+
+---
+
+## 8. BUG: Tratamento de exceções em `database.py`
+
+### Problema:
+Método `carregar_planilha_input`:
+
+```python
+if ext == ".csv":
+    self.input_data = self._ler_csv()
+elif ext in [".xlsx", ".xls"]:
+    self.input_data = self._ler_xlsx()
+else:
+    raise ValueError(f"Formato não suportado: {ext}")
+```
+
+**Problema:** Se `ext` não for `.csv` nem `.xlsx/.xls`, o código não tenta `self.input_data` com dados iniciais.
+
+### Solução:
+```python
+self.input_data = {}  # Inicializar antes
+```
+
+---
+
+## 9. BUG: Validação de dados numéricos (scraper/scraper.py)
+
+### Problema:
+No método `_transformar_dados_para_debito`:
+
+```python
+valor_str = str(valor_str).replace('R$', '').replace('r$', '')  # ⚠️ Faltou o segundo '$'
+```
+
+Deve ser:
+```python
+valor_str = str(valor_str).replace('R$', '').replace('R$', '').replace('r$', '')
+# Ou melhor:
+valor_str = str(valor_str).replace(['R$', 'r$'], '')
+```
+
+---
+
+## 10. PROBLEMA: Falta de tratamento de timeout
+
+### Arquivo: `main.py`
+
+### Problema:
+A função `_executar_consulta` não trata adequadamente de timeouts:
+
+```python
+def _executar_consulta(self, registro: dict):
+    # ...
+    page.goto(url, timeout=TIMEOUT_PER_REQUEST)
+```
+
+Se a página demorar mais de `TIMEOUT_PER_REQUEST` para carregar, a consulta falha.
+
+### Solução:
+Adicionar retry logic:
+```python
+max_retries = 3
+for attempt in range(max_retries):
+    try:
+        page.goto(url, timeout=TIMEOUT_PER_REQUEST)
+        if page.is_loading():
+            time.sleep(1)
+            continue
+        break
+    except Exception as e:
+        if attempt == max_retries - 1:
+            raise
+        time.sleep(2)
+```
+
+---
+
+## 11. PROBLEMA: Configuração de cookies incompleta
+
+### Arquivo: `config.py`
+
+### Problema:
+```python
+COOKIE_NAME = "__Secure-DA"
+COOKIE_VALUE = ""  # Vazio!
+```
+
+O sistema não funciona sem o cookie preenchido.
+
+### Solução:
+Usar o script `brave_cookie.py` para extrair o cookie, ou criar um arquivo de configuração separado.
+
+---
+
+## 12. BUG: Inconsistência entre `consultar()` em `app.py` e `consulta.py`
+
+### Problema:
+- `app.py` define `consultar()` que retorna `list`
+- `consulta.py` define `consultar()` que retorna `list[dict[str, str]]`
+
+### Solução:
+Decidir qual assinatura usar e manter consistência.
+
+---
+
+## 13. BUG: Tratamento de erros em `database.py`
+
+### Problema:
+No método `_gravar_xlsx`:
+
+```python
+for d in dados:
+    row = []
+    for h in cabecalho:
+        val = d.get(h, "")
+        if h == "Valor (R$)":
+            if str(val):
+                val = str(float(val).replace(",", "."))  # ⚠️ Se val não for numérico, falha!
+```
+
+### Solução:
+```python
+if h == "Valor (R$)":
+    try:
+        val = str(float(str(val).replace(",", ".")))
+    except (ValueError, TypeError):
+        val = 0.0
+```
+
+---
+
+## 14. PROBLEMA: Performance em consultas em lote
+
+### Arquivo: `main.py`
+
+### Problema:
+O código não implementa fila de tarefas para consultas paralelas.
+
+### Solução:
+Usar `queue.Queue` e múltiplos workers:
+
+```python
+queue = queue.Queue()
+workers = []
+for _ in range(MAX_WORKERS):
+    worker = Thread(target=worker_process, args=(queue,))
+    worker.start()
+    workers.append(worker)
+
+# Adicionar tarefas à fila
+for registro in registros:
+    queue.put(registro)
+
+# Esperar todos os workers terminarem
+for worker in workers:
+    worker.join()
+```
+
+---
+
+## 15. BUG: Faltando método `consultar()` implementado
+
+### Arquivos: `app.py`, `consulta.py`
+
+### Problema:
+Ambos os arquivos chamam `consultar()`, mas o método não está implementado:
+
+```python
+def consultar(registro: dict) -> list:
+    raise ConsultaErro("Consulta ao site ainda não implementada")
+```
+
+### Solução:
+Implementar usando Playwright (`scraper.scraper.DebitorScraper`):
+
+```python
+from scraper.scraper import DebitorScraper
+
+def consultar(registro: dict) -> list:
+    scraper = DebitorScraper(cookie_value=COOKIE_VALUE)
+    return scraper.consultar_debito(
+        cpf=registro["cpf"],
+        nome=registro["nome"]
+    )
+```
+
+---
+
+## 16. PROBLEMA: Validação de formato de CPF
+
+### Arquivo: `scraper/scraper.py`
+
+### Problema:
+O código não valida o formato do CPF antes de usar.
+
+### Solução:
+Adicionar validação:
+
+```python
+def validar_cpf(cpf: str) -> bool:
+    cpf = cpf.replace('.', '').replace('-', '')
+    if len(cpf) != 11 or not cpf.isdigit():
+        return False
+    # Algoritmo de validação...
+    return True
+```
+
+---
+
+## 17. BUG: Tratamento de valores monetários
+
+### Arquivo: `database.py`
+
+### Problema:
+No método `salvar_planilha_output`:
+
+```python
+"Valor (R$)": str(d.get("valor", 0.0)).replace('.', ',')
+```
+
+Se `d.get("valor", 0.0)` retornar uma string, `str()` é redundante e pode falhar.
+
+### Solução:
+```python
+valor = d.get("valor", 0.0)
+if isinstance(valor, str):
+    valor = float(valor.replace('.', ',').replace(',', '.'))
+"Valor (R$)": f"{valor:,.2f}".replace('.', ',')
+```
+
+---
+
+## 18. PROBLEMA: Ausência de tratamento de erros em `analyze.py` e `analisar_cookie.py`
+
+### Problema:
+Ambos os arquivos usam `sync_playwright` mas não tratam exceções adequadamente.
+
+### Solução:
+Adicionar tratamento de erros robusto:
+
+```python
+try:
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=False)
+        # ...
+except Exception as e:
+    print(f"Erro ao iniciar navegador: {e}")
+    sys.exit(1)
+```
+
+---
+
+## 19. BUG: Importação circular potencial
+
+### Problema:
+Se `scraper.scraper` importar algo de `database`, e `database` for importado por `scraper.scraper`, pode haver importação circular.
+
+### Solução:
+Verificar dependências e reestruturar se necessário.
+
+---
+
+## 20. PROBLEMA: Falta de documentação
+
+### Problema:
+Muitos métodos não têm docstrings completas.
+
+### Solução:
+Adicionar docstrings para todos os métodos públicos.
+
+---
+
+## Resumo por Severidade
+
+| Severidade | Quantidade |
+|------------|------------|
+| **CRÍTICA** (sistema não funciona) | 2 |
+| **ALTA** (impede funcionalidade) | 3 |
+| **MÉDIA** (causa falhas parciais) | 5 |
+| **BAIXA** (melhorias) | 10 |
+
+---
+
+## Recomendações de Prioridade
+
+### Prioridade 1 (Corrigir imediatamente):
+1. Adicionar `sys.path.insert()` em `analisar_cookie.py`, `analyze.py`, `test_sample.py`
+2. Definir `self.extraction_timeout` em `scraper/scraper.py`
+
+### Prioridade 2 (Funcionalidade essencial):
+3. Implementar o método `consultar()`
+4. Corrigir tratamento de tabelas em `scraper/scraper.py`
+5. Adicionar validação de CPF
+
+### Prioridade 3 (Estabilidade):
+6. Corrigir tratamento de exceções em `database.py`
+7. Implementar retry logic para timeouts
+8. Melhorar tratamento de erros em `analyze.py` e `analisar_cookie.py`
+
+### Prioridade 4 (Melhorias):
+9. Padronizar nomes dos arquivos
+10. Adicionar tratamento de valores monetários
+11. Implementar fila de tarefas para consultas paralelas
+12. Adicionar docstrings
+
+---
+
+## Conclusão
+
+O código tem **2 bugs críticos** que impedem o funcionamento do sistema, **3 bugs de alta** severidade, e vários problemas de baixa/média severidade. Recomenda-se corrigir os bugs críticos primeiro para tornar o sistema funcional.

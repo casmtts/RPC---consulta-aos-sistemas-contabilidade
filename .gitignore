@@ -1,0 +1,56 @@
+# ---------------------------------------------------------------------------
+# Dados sigilosos e arquivos de trabalho (NUNCA versionar)
+# ---------------------------------------------------------------------------
+*.xlsx
+*.xlsm
+*.xls
+*.csv
+*.numbers
+*.json
+*.rtf
+*.pdf
+*.docx
+*.doc
+*.zip
+*.html
+*.html_files/
+*_files/
+
+# Relatórios, logs e resultados
+relatorio*
+relatorio*
+resultado*
+*resultado*.txt
+relatorio.txt
+errors.log
+*.log
+
+# Cookies / credenciais
+cookie_atual.*
+*senha*
+*Senha*
+Email*
+
+# ---------------------------------------------------------------------------
+# Ambientes, cache e binários locais
+# ---------------------------------------------------------------------------
+**/.venv*/
+**/venv/
+**/__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.DS_Store
+Thumbs.db
+
+# Executáveis gerados localmente ( específicos desta máquina )
+*.app/
+*.icns
+
+# ---------------------------------------------------------------------------
+# Editores / SO
+# ---------------------------------------------------------------------------
+.idea/
+.vscode/
+*.swp
+*~

@@ -1,0 +1,113 @@
+================================================================================
+GUIA DE USO - CONSULTA DE DÉBITOS (PyQt6)
+================================================================================
+
+1. INICIANDO (sem terminal)
+================================================================================
+    Dê duplo clique em "Consulta de Débitos.app" (está nesta pasta).
+    O programa abre sozinho. Dica: arraste o ícone para o Dock.
+
+   O aplicativo instala dependências automaticamente se algo estiver faltando.
+   Logs: ~/Library/Logs/ConsultaDebitos.log
+
+   SE O MACOS DISSER QUE NAO PODE ABRIR:
+      - Clique com o botao direito no icone -> Abrir -> Abrir (uma vez so).
+      - Ou: Ajustes do Sistema -> Privacidade e Seguranca -> Abrir assim mesmo.
+      - Plano B: duplo clique em "Abrir Consulta de Debitos.command".
+        Abre o programa sozinho, sem precisar digitar nada.
+
+   Alternativa pelo terminal (equivalente):
+    cd "RPC - Consulta de débitos - REVISADO"
+    python3 main.py
+
+   Toda a preparação do ambiente também pode ser feita pela própria janela,
+   na aba "Ambiente".
+
+2. ABA AMBIENTE (preparação sem terminal)
+================================================================================
+   - "Instalar tudo" ............ instala bibliotecas + Chromium do Playwright
+   - "Instalar dependências" ... instala só o requirements.txt
+   - "Instalar navegador" ...... instala só o Chromium
+   - "Abrir Brave com depuração (9222)"
+                                fecha o Brave (com confirmação) e o reabre
+                                com a porta de depuração ativa
+   - "Abrir sistema no Brave" .. abre a página de débitos no navegador
+   - "Atualizar cookies" ....... lê JWT + JSESSIONID do perfil do Brave
+   - "Verificar novamente" ..... mostra o estado de cada pré-requisito
+
+   O campo de status indica OK/FALTA para: Python, PyQt6, Playwright, openpyxl,
+   cryptography, Chromium, porta 9222 e cookies do Brave.
+
+3. FLUXO DE CONSULTA
+================================================================================
+   1) Na aba Ambiente, instale tudo (primeira vez) e abra o Brave com
+      depuração. Entre no sistema no Brave e deixe a aba logada.
+   2) Clique em "Atualizar cookies".
+   3) Aba "Consulta": "Escolher planilha..." e escolha a aba (se houver).
+   4) Escolha o modo na aba Consulta:
+      - "Tentar SEM navegador (HTTP direto)" DESMARCADO (padrão): usa
+        Playwright. Com Brave na porta 9222 abre uma aba dele; sem CDP usa
+        Chromium invisível com os cookies do Brave.
+      - MARCADO: tenta consultar por HTTP puro, sem abrir navegador.
+        Experimental; se não der para confirmar, o item fica NAO VERIFICADO.
+   5) Ajuste "Pausa entre consultas" (segundos) na aba Consulta. Se houver
+      detector no site, aumente o valor e marque "Variar a pausa" (oscilacao
+      aleatoria de +-30%, sem padrao de tempo).
+   6) Clique em "Executar". Acompanhe a barra de progresso e a aba "Log".
+      Pressione ESC 2x para parar: o 1º aperto muda a cor dos botoes
+      "Parar" e do aviso; o 2º aperto interrompe a consulta.
+   7) RETOMADA: o programa abre sozinho a ultima planilha usada (botao
+      "Reabrir ultima" caso tenha trocado). Ao executar, pergunta se deseja
+      continuar. O ULTIMO registro é sempre pesquisado de novo — mesmo que a
+      busca tenha sido interrompida no meio — e seus resultados antigos sao
+      descartados. O arquivo _progresso.json guarda o sinalizador
+      "em_andamento" para identificar esse caso.
+   8) Aba "Resultados": linhas verdes têm débitos; cinzas não têm;
+      âmbar = NAO VERIFICADO; vermelho = ERRO.
+      "Revisar" reconulta apenas erros, não verificados e sem débitos.
+      "Salvar resultado..." grava XLSX ou CSV.
+
+4. PLANILHA DE ENTRADA
+================================================================================
+   Formatos: .xlsx, .xlsm, .csv. Cabeçalho é detectado mesmo abaixo de títulos.
+
+   Colunas reconhecidas (sem acento e sem diferenciar maiúsculas):
+     Nome ................ opcional
+     CPF ................. 11 dígitos (ou use CNPJ / CIF)
+     CNPJ ................ 14 dígitos
+     Tipo de Pessoa ...... FISICA, JURIDICA ou IMOVEL (opcional: inferido)
+
+5. PLANILHA DE SAÍDA
+================================================================================
+   Nome | CPF | Tipo de Débito | Competência | Valor (R$) | Status | Erro
+
+   Status: OK, NAO VERIFICADO ou ERRO. O programa nunca inventa "sem débitos":
+   só usa essa resposta quando a pesquisa foi confirmada.
+
+   So entram DEBITOS ATIVOS (DEBITO, DIVIDA_ATIVA, AJUIZADO). Pagos,
+   cancelados e prescritos ficam de fora. O tipo FISICA/JURIDICA é decidido
+   pelos digitos do documento (11 = CPF, 14 = CNPJ), mesmo que a coluna da
+   planilha se chame "CNPJ" e contenha um CPF.
+
+6. OBSERVAÇÕES
+================================================================================
+   - A consulta usa os últimos 10 anos de competência e mantém marcada somente
+     a situação "DÉBITO", ignorando filtros de consultas anteriores.
+   - O intervalo entre consultas é definido por EXTRACTION_DELAY em config.py.
+   - Cookies são lidos somente em memória; nada é gravado em arquivo.
+   - Em caso de dúvida, veja RELATORIO_REVISAO.md e o README.md.
+
+5. CORES DA PLANILHA E DA TELA
+===============================================================================
+   As linhas sao agrupadas por PESSOA: todos os debitos do 1o nome ficam
+   brancos, os do 2o nome cinza-claro, o 3o branco, e assim por diante.
+   O Status permanece com cor de texto propria (verde/vermelho/laranja).
+   No XLSX: cabecalho azul, filtro, painel congelado, valores em R$ e
+   colunas largas o suficiente para apresentacao.
+
+6. CONSULTA POR CIF NA REVISAO
+===============================================================================
+   Alem do CPF, a saida agora traz CIF, ID Divida e Vencimento.
+   Ao clicar em Revisar, o programa tambem consulta os CIFs encontrados
+   (tipo IMOVEL) para buscar campos que nao existiam antes e identificar
+   quais IPTUs estao em aberto e em qual imovel (CIF).
