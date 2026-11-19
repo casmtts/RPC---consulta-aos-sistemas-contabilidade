@@ -506,6 +506,21 @@ def _executar_com_playwright(funcao, *args, **kwargs):
     return resultado.get("valor")
 
 
+def _limpar_loop_asyncio() -> None:
+    """Remove um loop asyncio pendente deixado pelo Playwright na thread.
+
+    O Playwright Sync marca um loop como ativo na thread; se outra sessão
+    começar nela, o ``sync_playwright()`` reclama do "Async API". Esta
+    função zera essa marcação antes de abrir a sessão.
+    """
+    try:
+        import asyncio
+
+        asyncio._set_running_loop(None)
+    except Exception:  # noqa: BLE001
+        pass
+
+
 def _renovar_token(cookie_atual: str, sessao_atual: str) -> tuple[str, str]:
     """Relê os cookies do Brave (onde o navegador já renovou o JWT)."""
     try:
@@ -557,6 +572,8 @@ def consultar_debito(
     import urllib.request
 
     from playwright.sync_api import sync_playwright
+
+    _limpar_loop_asyncio()
 
     # Preferir a sessão real do Brave (via CDP): é onde o "Pesquisar" funciona.
     usar_cdp = False
@@ -719,8 +736,9 @@ def consultar_debito(
     # Resultado vazio pode ser condição de corrida do JSF. Refazer a consulta
     # numa sessão nova antes de aceitar que o CPF não tem débitos.
     if not debitos and _tentativa == 0:
-        return consultar_debito(
-            cpf, nome, cookie_value, timeout, tipo, cookie_sessao, _tentativa=1
+        return _executar_com_playwright(
+            consultar_debito, cpf, nome, cookie_value, timeout, tipo,
+            cookie_sessao, _tentativa=1
         )
     return debitos
 
