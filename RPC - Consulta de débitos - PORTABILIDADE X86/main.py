@@ -112,10 +112,10 @@ def _pincel_revisao() -> QBrush:
     global _PINCEL_REVISAO
     if _PINCEL_REVISAO is None:
         tecido = QPixmap(16, 16)
-        tecido.fill(QColor("#FFE0B2"))
+        tecido.fill(QColor("#FFB74D"))
         pintor = QPainter(tecido)
-        caneta = QPen(QColor("#FF8C00"))
-        caneta.setWidth(4)
+        caneta = QPen(QColor("#C62828"))
+        caneta.setWidth(6)
         pintor.setPen(caneta)
         for deslocamento in range(-16, 32, 8):
             pintor.drawLine(deslocamento, 16, deslocamento + 16, 0)
@@ -132,7 +132,7 @@ class _DelegadoRevisao(QStyledItemDelegate):
         if not index.data(_MARCA_REVISAO):
             return
         painter.save()
-        painter.setOpacity(0.55)
+        painter.setOpacity(0.8)
         painter.fillRect(option.rect, _pincel_revisao())
         painter.restore()
 
@@ -1550,6 +1550,7 @@ class ConsultaWorker(QThread):
     aviso = pyqtSignal(str)
     item_concluido = pyqtSignal(dict)
     documento_revisado = pyqtSignal(str, list)
+    documento_iniciado = pyqtSignal(str)
     finalizado = pyqtSignal(str)
 
     def __init__(self, registros: list[dict], cookie: str = "", timeout: int = 30,
@@ -1631,6 +1632,7 @@ class ConsultaWorker(QThread):
             # Na execução paralela, estes documentos ficam com a revisão.
             if documento.strip() in self.documentos_ignorar:
                 continue
+            self.documento_iniciado.emit(str(documento).strip())
             nome = _campo(registro, "nome")
             tipo = _campo(registro, "tipo de pessoa") or _campo(registro, "tipo pessoa")
 
@@ -3452,7 +3454,7 @@ class MainWindow(QMainWindow):
             self._log("Revisão paralela: registros originais não encontrados.")
             return
 
-        self._marcar_em_revisao(documentos)
+        # A faixa é aplicada só ao documento que estiver sendo consultado.
         self.worker_revisao = ConsultaWorker(
             registros,
             self.campo_cookie.text(),
@@ -3466,6 +3468,9 @@ class MainWindow(QMainWindow):
         )
         self.worker_revisao.documento_revisado.connect(
             self._ao_documento_revisado_paralelo
+        )
+        self.worker_revisao.documento_iniciado.connect(
+            self._ao_documento_iniciado_revisao
         )
         self.worker_revisao.progresso.connect(self._ao_progresso_revisao)
         self.worker_revisao.finalizado.connect(self._ao_finalizar_revisao_paralela)
@@ -3481,6 +3486,13 @@ class MainWindow(QMainWindow):
         )
         self.worker_revisao.start()
         self._log(f"Revisão paralela iniciada: {len(registros)} pendente(s).")
+
+    def _ao_documento_iniciado_revisao(self, documento: str) -> None:
+        """Destaca somente o documento que está sendo revisado agora."""
+        self._desmarcar_em_revisao()
+        documento = str(documento).strip()
+        if documento:
+            self._marcar_em_revisao({documento})
 
     def _ao_documento_revisado_paralelo(self, documento: str, novos: list[dict]) -> None:
         """Guarda a revisão paralela à parte e salva seu progresso."""
@@ -3690,11 +3702,7 @@ class MainWindow(QMainWindow):
 
         # Guarda a seleção: se parar de novo, Revisar continua exatamente daqui.
         self._registros_revisao = list(registros)
-        self._marcar_em_revisao({
-            self._documento_registro(r)
-            for r in registros
-            if self._documento_registro(r)
-        })
+        # A faixa acompanha apenas o documento em consulta, via sinal do worker.
 
         self._carregar_cookie_brave(silent=True)
         self.barra_progresso.setValue(0)
@@ -3720,6 +3728,7 @@ class MainWindow(QMainWindow):
         self.worker.progresso.connect(self._ao_progresso)
         self.worker.aviso.connect(self._log)
         self.worker.documento_revisado.connect(self._ao_documento_revisado)
+        self.worker.documento_iniciado.connect(self._ao_documento_iniciado_revisao)
         self.worker.finalizado.connect(self._ao_finalizar)
         self.worker.finished.connect(self._limpar_worker)
         self.worker.start()

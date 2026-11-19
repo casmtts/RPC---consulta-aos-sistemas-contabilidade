@@ -210,8 +210,9 @@ Descrições especiais em `Tipo de Débito`:
   (erros “o site está com o documento X, mas foi pedido Y”). Por isso o acesso
   ao site é **serializado por um lock**: as duas rotinas andam no mesmo
   processo, mas nunca pisam no site ao mesmo tempo. As linhas em revisão aparecem com **fundo
-  laranja de faixas diagonais** (aspecto de “em obra”) e voltam às cores
-  normais quando a revisão termina. O andamento aparece no rótulo **Revisão
+  laranja escuro com faixas diagonais** bem visíveis (aspecto de “em obra”),
+  aplicadas **somente ao documento que está sendo revisado naquele instante**;
+  ao passar para o próximo, a faixa anterior é removida. O andamento aparece no rótulo **Revisão
   paralela: ...** na aba Consulta — inclusive a mensagem *sem pendências para
   revisar*, que explica quando não há itens pendentes para a segunda consulta.
   O **ESC 2x** / botão **Parar** encerra as duas consultas. Os resultados da
