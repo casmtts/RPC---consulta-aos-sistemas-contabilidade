@@ -165,6 +165,9 @@ Descrições especiais em `Tipo de Débito`:
 - `Sem débitos (NÃO CONFIRMADO)` — o site mostrou ausência de débitos, mas o
   documento não pôde ser 100% confirmado. **Sempre vai para o Revisar**,
   porque a planilha de entrada é uma lista de devedores.
+- `(M)` no final (ex.: `IPTU (M)`) — débito **migrado**. O programa preserva a
+  marcação que já vem do site e também acrescenta `(M)` quando a coluna
+  `Origem` da planilha de entrada indica migração (ex.: `IPTU (M)`).
 
 ---
 
@@ -260,7 +263,9 @@ scripts de análise.
 | `bad CPU type` | Você está na arquitetura errada: use REVISADO (Apple Silicon) ou X86 (Intel). |
 | "Cookie não encontrado no Brave" | Abra o sistema no Brave, faça login e clique em **Atualizar cookies**. |
 | `NAO VERIFICADO ... status 404` | Sessão/viewstate expirada: o programa já tenta 3x com token novo; se persistir, entre no sistema novamente e use **Revisar**. |
-| `página de erro (código 13429)` | Mesmo tratamento acima: token renovado e consulta refeita automaticamente. |
+| `página de erro (código 13429/13414)` | Mesmo tratamento acima: token renovado e consulta refeita automaticamente. |
+| `Botão 'Pesquisar' não encontrado` | O programa abre sessão nova e repete a consulta (até 3x). Se persistir, confira se a aba do sistema está logada no Brave. |
+| `Page.goto: net::ERR_ABORTED` | Navegação abortada também dispara nova tentativa com sessão nova. |
 | "Playwright Sync API inside the asyncio loop" | Corrigido: cada sessão roda em thread limpa. |
 | macOS não abre o `.app` | Botão direito → Abrir → Abrir (app assinado localmente, sem certificado Apple). |
 | Brave não inicia com depuração | Aba **Ambiente** → **Abrir Brave com depuração (9222)**. |

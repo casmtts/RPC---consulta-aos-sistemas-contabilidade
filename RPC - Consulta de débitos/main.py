@@ -306,6 +306,15 @@ def _campo(registro: dict, nome: str) -> str:
     return ""
 
 
+def _tipo_debito_com_migracao(tipo_site: str, registro: dict) -> str:
+    """Acrescenta '(M)' quando a origem da planilha indica débito migrado."""
+    tipo = str(tipo_site or "").strip()
+    origem = _campo(registro, "origem")
+    if tipo and "(m)" in origem.lower() and "(m)" not in tipo.lower():
+        return f"{tipo} (M)"
+    return tipo
+
+
 def _valor_por_chaves(item: dict, chaves: list[str]) -> str:
     for chave, valor in item.items():
         chave_norm = _sem_acento(chave)
@@ -829,20 +838,26 @@ class ConsultaWorker(QThread):
                         break
                     except ConsultaNaoVerificada as exc:
                         mensagem = str(exc).lower()
+                        # Falhas de sessão, navigation abortada e formulário
+                        # ausente disparam uma nova tentativa em sessão nova.
                         repetir = any(indicio in mensagem for indicio in (
                             "404", "página de erro", "erro (código",
                             "sessão expirada", "sessao expirada",
                             "token", "autenticação", "autenticacao",
+                            "pesquisar", "pesquisa não executada",
+                            "não foi possível acessar", "err_aborted",
+                            "net::", "não apareceu tabela",
+                            "radio de tipo", "selecionar o tipo",
                         ))
                         if not repetir or tentativa == 2:
                             raise
                         self.aviso.emit(
-                            f"{documento}: {exc} — pegando novo token do "
+                            f"{documento}: {exc} — abrindo sessão nova no "
                             f"Brave e refazendo a consulta ({tentativa + 2}/3)."
                         )
                         self.progresso.emit(
                             max(0, int((indice - 1) * 100 / total)),
-                            f"Refazendo {documento} com token novo "
+                            f"Refazendo {documento} com sessão nova "
                             f"({tentativa + 2}/3)",
                         )
                         self.msleep(1000)
@@ -856,7 +871,9 @@ class ConsultaWorker(QThread):
                     novos = [
                         {
                             "Nome": nome, "CPF": documento,
-                            "Tipo de Débito": debito["tipo_debito"],
+                            "Tipo de Débito": _tipo_debito_com_migracao(
+                                debito["tipo_debito"], registro
+                            ),
                             "Competência": debito["competencia"],
                             "Valor (R$)": f"{debito['valor']:.2f}".replace(".", ","),
                             "Status": "VERIFICADO", "Erro": "",
