@@ -61,6 +61,11 @@ consultar situação cadastral de CNPJ ( BrasilAPI / ReceitaWS ), em GUI e termi
    e exporta em **XLSX ou CSV**.
 5. Salva progresso parcial a cada registro, permitindo **retomar** e
    **revisar somente o que falta** após uma interrupção.
+6. Para **CPFs fictícios do sistema legado** (`000.000.xxx-xx`, que o site
+   rejeita), localiza os débitos no relatório antigo
+   `relatorio-lancamentos-debito-divida-ativa-*.csv` (procurado na pasta do
+   programa, na pasta pai ou no diretório atual) e preenche o resultado com
+   esses débitos — sem consultar o site e sem marcar como inválido.
 
 Saídas incluem `CIF`, `ID Dívida` e `Vencimento`, para identificar, por
 exemplo, qual imóvel (CIF) está devendo IPTU.
@@ -326,7 +331,7 @@ scripts de análise.
 | `página de erro (código 13429/13414)` | Mesmo tratamento acima: token renovado e consulta refeita automaticamente. |
 | `Botão 'Pesquisar' não encontrado` | O programa abre sessão nova e repete a consulta (até 3x). Se persistir, confira se a aba do sistema está logada no navegador. |
 | `O site está com o documento X, mas foi pedido Y` | O site re-renderizou o campo e restaurou um CPF anterior. O programa redigita o documento e confirma o valor antes de pesquisar; se ainda divergir, descarta o resultado (nunca aceita um débito de outro CPF). |
-| `CPF/CNPJ inválido (dígito verificador)` | CPFs do tipo `000.000.xxx-xx` com dígitos verificadores errados são rejeitados pelo site (erros 13445/13446/404). O programa **não consulta** esses documentos: marca `DOCUMENTO INVÁLIDO` com essa mensagem, não coloca na fila do Revisar e segue em frente. Confira a planilha de entrada. |
+| `CPF/CNPJ inválido (dígito verificador)` | CPFs do tipo `000.000.xxx-xx` com dígitos verificadores errados são rejeitados pelo site (erros 13445/13446/404). O programa **não consulta** esses documentos no site: procura os débitos no relatório antigo e os lança no resultado. Se não houver débito lá, marca `DOCUMENTO INVÁLIDO` (fora do Revisar). |
 | `Page.goto: net::ERR_ABORTED` | Navegação abortada também dispara nova tentativa com sessão nova. |
 | "Playwright Sync API inside the asyncio loop" | Corrigido: cada sessão roda em thread limpa. |
 | macOS não abre o `.app` | Botão direito → Abrir → Abrir (app assinado localmente, sem certificado Apple). |

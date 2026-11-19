@@ -307,6 +307,74 @@ def _ordenar_resultados(resultados: list[dict]) -> list[dict]:
     return sorted(resultados, key=lambda item: int(item.get("_indice") or 0))
 
 
+_DEBITOS_ANTIGOS: dict[str, list[dict]] | None = None
+
+
+def _caminho_relatorio_antigo() -> Path | None:
+    """Localiza o relatório de débitos do sistema legado."""
+    padrao = "relatorio-lancamentos-debito-divida-ativa-*.csv"
+    bases = (
+        Path(__file__).resolve().parent,
+        Path(__file__).resolve().parent.parent,
+        Path.cwd(),
+    )
+    for base in bases:
+        encontrados = sorted(base.glob(padrao))
+        if encontrados:
+            return encontrados[-1]
+    return None
+
+
+def _debitos_relatorio_antigo() -> dict[str, list[dict]]:
+    """Débitos em aberto do relatório antigo, indexados pelos dígitos do CPF."""
+    global _DEBITOS_ANTIGOS
+    if _DEBITOS_ANTIGOS is not None:
+        return _DEBITOS_ANTIGOS
+    dados: dict[str, list[dict]] = {}
+    caminho = _caminho_relatorio_antigo()
+    if caminho is not None:
+        try:
+            with open(
+                caminho, encoding="utf-8-sig", errors="replace", newline=""
+            ) as arquivo:
+                leitor = csv.reader(arquivo, delimiter=";")
+                cabecalho: list[str] | None = None
+                for linha in leitor:
+                    if cabecalho is None:
+                        if any("CPF/CNPJ" in str(coluna) for coluna in linha):
+                            cabecalho = [str(coluna).strip() for coluna in linha]
+                        continue
+                    if len(linha) != len(cabecalho):
+                        continue
+                    registro = dict(zip(cabecalho, linha))
+                    if (
+                        str(registro.get("Situação Atual do Débito", ""))
+                        .strip()
+                        .upper()
+                        != "DÉBITO"
+                    ):
+                        continue
+                    digitos = "".join(
+                        caracter
+                        for caracter in str(registro.get("CPF/CNPJ", ""))
+                        if caracter.isdigit()
+                    )
+                    if not digitos:
+                        continue
+                    dados.setdefault(digitos, []).append({
+                        "tipo_debito": str(registro.get("Origem do Débito", "")).strip(),
+                        "competencia": str(registro.get("Exercício", "")).strip(),
+                        "valor": _para_numero(registro.get("Valor Atualizado Débito (R$)", "")),
+                        "cif": str(registro.get("CIF", "")).strip(),
+                        "id_divida": str(registro.get("Número do Débito", "")).strip(),
+                        "vencimento": str(registro.get("Vencimento do Débito", "")).strip(),
+                    })
+        except Exception:  # noqa: BLE001
+            pass
+    _DEBITOS_ANTIGOS = dados
+    return dados
+
+
 def gravar_planilha(caminho: str, linhas: list[dict]) -> Path:
     """Grava o resultado em .xlsx ou .csv, com branco para com débitos e cinza para sem."""
     linhas = _ordenar_resultados(linhas)
@@ -988,17 +1056,37 @@ class ConsultaWorker(QThread):
 
             # CPF/CNPJ inválido só gera erro-page no site; não adianta repetir.
             if not _documento_valido(documento, tipo):
-                self._publicar(documento, [{
-                    "Nome": nome, "CPF": documento,
-                    "Tipo de Débito": "-",
-                    "Competência": competencia_original or "-",
-                    "Valor (R$)": "0,00",
-                    "Status": "DOCUMENTO INVÁLIDO",
-                    "Erro": (
-                        "CPF/CNPJ inválido (dígito verificador) — "
-                        "conferir a planilha de entrada."
-                    ),
-                }], indice_real)
+                digitos = "".join(
+                    caracter for caracter in documento if caracter.isdigit()
+                )
+                antigos = _debitos_relatorio_antigo().get(digitos, [])
+                if antigos:
+                    novos = [
+                        {
+                            "Nome": nome, "CPF": documento,
+                            "Tipo de Débito": debito["tipo_debito"],
+                            "Competência": debito["competencia"],
+                            "Valor (R$)": f"{debito['valor']:.2f}".replace(".", ","),
+                            "Status": "VERIFICADO",
+                            "Erro": "Débito localizado no relatório antigo (sistema legado).",
+                            "CIF": debito["cif"],
+                            "ID Dívida": debito["id_divida"],
+                            "Vencimento": debito["vencimento"],
+                        }
+                        for debito in antigos
+                    ]
+                else:
+                    novos = [{
+                        "Nome": nome, "CPF": documento,
+                        "Tipo de Débito": "-",
+                        "Competência": competencia_original or "-",
+                        "Valor (R$)": "0,00",
+                        "Status": "DOCUMENTO INVÁLIDO",
+                        "Erro": (
+                            "CPF/CNPJ inválido e sem débito no relatório antigo."
+                        ),
+                    }]
+                self._publicar(documento, novos, indice_real)
                 if self.arquivo_progresso is not None:
                     salvar_progresso(
                         self.arquivo_progresso, indice_real, total, self.resultados
