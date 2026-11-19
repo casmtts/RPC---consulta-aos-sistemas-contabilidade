@@ -3228,7 +3228,13 @@ class MainWindow(QMainWindow):
                 for r in self.resultados_revisao
                 if str(r.get("CPF", "")).strip()
             })
+            # Mantém o nome/CPF que veio na mensagem do worker.
+            rotulo = ""
+            if ":" in mensagem:
+                rotulo = mensagem.split(":", 1)[1].strip()
             mensagem = f"Processado {feitos}/{self._total_revisao}"
+            if rotulo:
+                mensagem += f": {rotulo}"
         self.label_revisao_paralela.setText(f"Revisão paralela: {mensagem}")
 
     def _inserir_linha_tabela(self, item: dict) -> None:
