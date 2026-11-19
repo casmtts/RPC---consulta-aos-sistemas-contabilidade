@@ -201,8 +201,10 @@ Descrições especiais em `Tipo de Débito`:
   então cada rotina atua num conjunto distinto de CPFs e nunca consulta o
   mesmo documento ao mesmo tempo. As linhas em revisão aparecem com **fundo
   laranja de faixas diagonais** (aspecto de “em obra”) e voltam às cores
-  normais quando a revisão termina. O **ESC 2x** / botão **Parar** encerra as
-  duas consultas.
+  normais quando a revisão termina. O andamento aparece no rótulo **Revisão
+  paralela: ...** na aba Consulta — inclusive a mensagem *sem pendências para
+  revisar*, que explica quando não há itens pendentes para a segunda consulta.
+  O **ESC 2x** / botão **Parar** encerra as duas consultas.
 
 ---
 

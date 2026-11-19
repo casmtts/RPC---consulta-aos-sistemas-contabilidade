@@ -2380,6 +2380,9 @@ class MainWindow(QMainWindow):
         self.campo_velocidade.setSingleStep(0.5)
         self.campo_velocidade.setDecimals(1)
         self.campo_velocidade.setSuffix(" s")
+        self.campo_velocidade.setMinimumWidth(100)
+        self.campo_velocidade.setMinimumHeight(30)
+        self.campo_velocidade.setAlignment(Qt.AlignmentFlag.AlignRight)
         try:
             pausa_inicial = float(
                 self._config.value("pausa_consultas", EXTRACTION_DELAY)
@@ -2417,6 +2420,9 @@ class MainWindow(QMainWindow):
         execucao_layout.addWidget(self.barra_progresso)
         self.label_status = QLabel("Pronto")
         execucao_layout.addWidget(self.label_status)
+        self.label_revisao_paralela = QLabel("Revisão paralela: inativa")
+        self.label_revisao_paralela.setObjectName("dicaEspaco")
+        execucao_layout.addWidget(self.label_revisao_paralela)
         consulta_layout.addWidget(grupo_execucao)
 
         abas.addTab(aba_consulta, "Consulta")
@@ -3042,6 +3048,10 @@ class MainWindow(QMainWindow):
         self.label_status.setText(mensagem)
         self.statusBar().showMessage(mensagem)
 
+    def _ao_progresso_revisao(self, percentual: int, mensagem: str) -> None:
+        """Mostra o andamento da revisão paralela sem mexer na barra principal."""
+        self.label_revisao_paralela.setText(f"Revisão paralela: {mensagem}")
+
     def _inserir_linha_tabela(self, item: dict) -> None:
         """Insere um item na tabela sem alterar a lista ``resultados``.
 
@@ -3226,6 +3236,9 @@ class MainWindow(QMainWindow):
         if documentos is None:
             documentos = self._documentos_pendentes()
         if not documentos:
+            self.label_revisao_paralela.setText(
+                "Revisão paralela: sem pendências para revisar"
+            )
             self._log("Revisão paralela: não há pendências para revisar.")
             return
         registros = [
@@ -3233,6 +3246,9 @@ class MainWindow(QMainWindow):
             if self._documento_registro(r) in documentos
         ]
         if not registros:
+            self.label_revisao_paralela.setText(
+                "Revisão paralela: registros originais não encontrados"
+            )
             self._log("Revisão paralela: registros originais não encontrados.")
             return
 
@@ -3252,11 +3268,18 @@ class MainWindow(QMainWindow):
         self.worker_revisao.documento_revisado.connect(
             self._ao_documento_revisado_paralelo
         )
+        self.worker_revisao.progresso.connect(self._ao_progresso_revisao)
         self.worker_revisao.finalizado.connect(self._ao_finalizar_revisao_paralela)
         self.worker_revisao.finished.connect(self._limpar_worker_revisao)
         self.worker_revisao.aviso.connect(self._log)
         self._revisao_paralela_ativa = True
         self.botao_revisar.setEnabled(False)
+        self.label_revisao_paralela.setText(
+            f"Revisão paralela: iniciando ({len(registros)} pendente(s))..."
+        )
+        self.statusBar().showMessage(
+            f"Revisão paralela iniciada: {len(registros)} pendente(s)."
+        )
         self.worker_revisao.start()
         self._log(f"Revisão paralela iniciada: {len(registros)} pendente(s).")
 
@@ -3266,6 +3289,10 @@ class MainWindow(QMainWindow):
 
     def _ao_finalizar_revisao_paralela(self, mensagem: str) -> None:
         self._log(f"Revisão paralela: {mensagem}")
+        self.label_revisao_paralela.setText(
+            "Revisão paralela: interrompida" if "interrompido" in mensagem.lower()
+            else "Revisão paralela: concluída"
+        )
         self._revisao_paralela_ativa = False
         self._mesclar_revisao_paralela()
         self._desmarcar_em_revisao()
