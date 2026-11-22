@@ -2,7 +2,7 @@
 
 ## 📋 Descrição
 
-Sistema para consultar e extrair dados de débitos de múltiplos devedores do site do Santana de Araçuaia-PA e gerar planilhas organizadas.
+Sistema para consultar e extrair dados de débitos de múltiplos devedores e gerar planilhas organizadas.
 
 ## 🎯 Objetivo
 
