@@ -1,6 +1,6 @@
 # Consulta de Débitos — interface PyQt6
 
-Programa para consultar débitos no sistema NFS-e de Santana do Araguaia-PA a
+Programa para consultar débitos no sistema NFS-e a
 partir de uma planilha de CPFs/CNPJs, com interface gráfica e exportação do
 resultado.
 
