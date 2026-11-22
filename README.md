@@ -1,7 +1,6 @@
 # RPC — Consulta aos Sistemas de Contabilidade
 
-Conjunto de ferramentas para **consultar débitos em lote** no sistema NFS-e do
-município de **Santana do Araguaia-PA**, a partir de uma planilha de
+Conjunto de ferramentas para **consultar débitos em lote** no sistema NFS-e, a partir de uma planilha de
 CPFs/CNPJs/CIFs, com interface gráfica, exportação dos resultados e retomada
 de consultas interrompidas.
 
