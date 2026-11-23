@@ -419,10 +419,17 @@ def salvar_progresso(caminho: Path, processados: int, total: int,
 
 
 def ler_progresso(caminho: Path) -> dict | None:
-    """Lê o progresso salvo, se existir e for válido."""
+    """Lê o progresso salvo, se existir e for válido.
+
+    Também aproveita arquivos de progresso antigos que ficaram na raiz da
+    pasta, antes de o destino passar a ser ``relatorios/``.
+    """
     import json
     if not caminho.exists():
-        return None
+        antigo = caminho.parent.parent / caminho.name
+        if not antigo.exists():
+            return None
+        caminho = antigo
     try:
         dados = json.loads(caminho.read_text(encoding="utf-8"))
         if not isinstance(dados.get("processados"), int):
