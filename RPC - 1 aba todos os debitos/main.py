@@ -56,6 +56,7 @@ from preencher_observacao import (
     preencher as gravar_relatorio_com_observacao,
     tem_coluna_observacao,
     registros_observacao_vazia,
+    localizar_cabecalho,
 )
 import brave_cookie
 from brave_cookie import (
@@ -3477,6 +3478,111 @@ class MainWindow(QMainWindow):
                     )
                 tabela.setItem(posicao, coluna, celula)
 
+    def _progresso_pela_planilha(self, arquivo_progresso: Path | None,
+                                 aba: str) -> dict | None:
+        """Reconstrói o progresso a partir da planilha Resultado já gerada.
+
+        Se o contador de progresso foi perdido (ESC no diálogo, arquivo
+        sobrescrito etc.), os débitos continuam salvos no XLSX. Daí dá para
+        saber quais documentos já foram consultados e retomar do próximo.
+        """
+        if not self.caminho_entrada or arquivo_progresso is None:
+            return None
+        planilha = _pasta_relatorios() / f"{self.caminho_entrada.stem}_resultado.xlsx"
+        if not planilha.exists():
+            return None
+
+        from openpyxl import load_workbook
+
+        wb = load_workbook(planilha, read_only=True, data_only=True)
+        try:
+            ws = wb["Resultado"] if "Resultado" in wb.sheetnames else wb.active
+            cabecalho = [
+                "" if c is None else str(c).strip()
+                for c in next(ws.iter_rows(min_row=1, max_row=1, values_only=True), ())
+            ]
+            if "CPF" not in cabecalho:
+                return None
+            col_cpf = cabecalho.index("CPF")
+            consultados: set[str] = set()
+            linhas: list[dict] = []
+            for linha in ws.iter_rows(min_row=2, values_only=True):
+                doc = re.sub(r"\D", "", str(linha[col_cpf] or ""))
+                if not doc:
+                    continue
+                consultados.add(doc)
+                item = {
+                    cabecalho[i]: linha[i]
+                    for i in range(min(len(cabecalho), len(linha)))
+                    if cabecalho[i]
+                }
+                linhas.append(item)
+        finally:
+            wb.close()
+
+        # Se a planilha classica foi sobrescrita com poucos resultados, usa
+        # as observacoes ja gravadas no relatorio de 1 linha como fonte.
+        if len(consultados) < 10:
+            relatorio = (
+                _pasta_relatorios()
+                / f"{self.caminho_entrada.stem}_1_LINHA_TODOS_OS_DEBITOS.xlsx"
+            )
+            if relatorio.exists():
+                wb2 = load_workbook(relatorio, read_only=True, data_only=True)
+                try:
+                    aba_ws = wb2[aba] if aba in wb2.sheetnames else None
+                    if aba_ws is not None:
+                        local = localizar_cabecalho(aba_ws)
+                        if local is not None:
+                            linha_cab, col_doc, col_obs = local
+                            for linha in aba_ws.iter_rows(
+                                min_row=linha_cab + 1, values_only=True
+                            ):
+                                doc = re.sub(
+                                    r"\D", "",
+                                    str(linha[col_doc - 1]
+                                        if col_doc <= len(linha) else ""),
+                                )
+                                obs = str(
+                                    linha[col_obs - 1] or ""
+                                    if col_obs <= len(linha) else ""
+                                ).strip()
+                                if doc and obs:
+                                    consultados.add(doc)
+                finally:
+                    wb2.close()
+
+        if not consultados:
+            return None
+
+        indices: dict[str, int] = {}
+        for indice, registro in enumerate(self.registros, start=1):
+            chave_doc = next(
+                (k for k in registro if "cpf" in k.lower() or "cnpj" in k.lower()),
+                None,
+            )
+            valor = registro.get(chave_doc, "") if chave_doc else ""
+            doc = re.sub(r"\D", "", str(valor or ""))
+            if doc:
+                indices[doc] = indice
+        ultimo = max((indices[d] for d in consultados if d in indices), default=0)
+        if ultimo <= 0:
+            return None
+        for item in linhas:
+            doc = re.sub(r"\D", "", str(item.get("CPF", "")))
+            item["_indice"] = indices.get(doc, 0)
+
+        salvar_progresso(
+            arquivo_progresso, ultimo, len(self.registros), linhas,
+            em_andamento=False, indice_atual=ultimo,
+            entrada=str(self.caminho_entrada), aba=aba, forcado=True,
+        )
+        self._log(
+            f"Progresso reconstruído da planilha salva: {ultimo} registro(s) "
+            "já consultado(s)."
+        )
+        return ler_progresso(arquivo_progresso)
+
     def iniciar(self) -> None:
         if self.worker is not None and self.worker.isRunning():
             return
@@ -3500,6 +3606,15 @@ class MainWindow(QMainWindow):
         indice_inicial = 0
         resultados_iniciais: list[dict] = []
         progresso = ler_progresso(arquivo_progresso) if arquivo_progresso else None
+        # Contador zerado/suspeito: reconstrói do que já está na planilha
+        # Resultado salva, em vez de recomeçar do registro 1.
+        if (
+            (progresso is None or int(progresso.get("processados", 0)) < 10)
+            and arquivo_progresso is not None
+        ):
+            reconstruido = self._progresso_pela_planilha(arquivo_progresso, aba)
+            if reconstruido is not None:
+                progresso = reconstruido
         entrada = str(self.caminho_entrada) if self.caminho_entrada else ""
         if progresso and 0 < progresso["processados"] < len(self.registros):
             processados = progresso["processados"]
