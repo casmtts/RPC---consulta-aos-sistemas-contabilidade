@@ -461,13 +461,35 @@ def _cor_argb(cor: str) -> str:
     return texto
 
 
-def _ordenar_resultados(resultados: list[dict]) -> list[dict]:
-    """Ordena pela linha da planilha de entrada (ordem estável por devedor).
+def _ano_debito(item: dict) -> int:
+    """Ano de referência do débito: competência, com fallback no vencimento."""
+    from datetime import date, datetime
 
-    Sem isso, os itens vindos da revisão paralela entram no fim da lista e o
-    relatório não bate com a ordem da planilha enviada para análise.
-    """
-    return sorted(resultados, key=lambda item: int(item.get("_indice") or 0))
+    competencia = str(item.get("Competência", "") or "").strip()
+    match = re.search(r"(20\d{2})", competencia)
+    if match:
+        return int(match.group(1))
+    match = re.search(r"/\s*(\d{2})\b", competencia)
+    if match:
+        return 2000 + int(match.group(1))
+    vencimento = item.get("Vencimento", "")
+    if isinstance(vencimento, (datetime, date)):
+        return vencimento.year
+    match = re.search(r"(?:19|20)\d{2}", str(vencimento or ""))
+    return int(match.group(0)) if match else 0
+
+
+def _ordenar_resultados(resultados: list[dict]) -> list[dict]:
+    """Contribuintes em ordem alfabética; débitos do mais novo ao mais velho."""
+    return sorted(
+        resultados,
+        key=lambda item: (
+            _sem_acento(str(item.get("Nome", "") or "")).strip().lower(),
+            -_ano_debito(item),
+            int(item.get("_indice") or 0),
+            str(item.get("CPF", "") or ""),
+        ),
+    )
 
 
 _DEBITOS_ANTIGOS: dict[str, list[dict]] | None = None
@@ -560,7 +582,7 @@ def mapa_observacoes(linhas: list[dict]) -> dict[str, list[str]]:
     """
     from collections import OrderedDict
 
-    mapa: dict[str, OrderedDict[str, None]] = {}
+    mapa: dict[str, OrderedDict[str, int]] = {}
     for item in linhas:
         documento = re.sub(r"\D", "", str(item.get("CPF", "")))
         if len(documento) not in (11, 14):
@@ -572,8 +594,15 @@ def mapa_observacoes(linhas: list[dict]) -> dict[str, list[str]]:
         status = str(item.get("Status", "") or "").strip().lower()
         if status in ("erro", "nao verificado") or item.get("Erro"):
             continue
-        mapa.setdefault(documento, OrderedDict())[f"{tipo} – {competencia}"] = None
-    return {doc: list(pares) for doc, pares in mapa.items()}
+        mapa.setdefault(documento, OrderedDict())[
+            f"{tipo} – {competencia}"
+        ] = _ano_debito(item)
+    return {
+        doc: [texto for texto, _ in sorted(
+            pares.items(), key=lambda par: (-par[1], par[0])
+        )]
+        for doc, pares in mapa.items()
+    }
 
 
 def gravar_planilha(caminho: str, linhas: list[dict]) -> Path:

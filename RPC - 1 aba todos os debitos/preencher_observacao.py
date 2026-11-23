@@ -73,6 +73,16 @@ def tem_coluna_observacao(caminho: Path) -> bool:
     return False
 
 
+def ano_debito(competencia: str) -> int:
+    """Ano da competência (ex.: 2024, 1/2026, fev/22)."""
+    texto = str(competencia or "")
+    match = re.search(r"(20\d{2})", texto)
+    if match:
+        return int(match.group(1))
+    match = re.search(r"/\s*(\d{2})\b", texto)
+    return 2000 + int(match.group(1)) if match else 0
+
+
 def carregar_debitos(caminho: Path) -> dict[str, list[str]]:
     """Lê a planilha de débitos e devolve {CPF/CNPJ: [tipo – competência]}."""
     wb = load_workbook(caminho, read_only=True, data_only=True)
@@ -99,7 +109,7 @@ def carregar_debitos(caminho: Path) -> dict[str, list[str]]:
         col_status = indice("status")
         col_erro = indice("erro")
 
-        debitos: dict[str, OrderedDict[str, None]] = {}
+        debitos: dict[str, OrderedDict[str, int]] = {}
         for linha in linhas:
             if col_doc >= len(linha):
                 continue
@@ -116,11 +126,18 @@ def carregar_debitos(caminho: Path) -> dict[str, list[str]]:
             comp = str(linha[col_comp] or "").strip()
             if not tipo or not comp:
                 continue
-            debitos.setdefault(doc, OrderedDict())[tipo + SEPARADOR + comp] = None
+            debitos.setdefault(doc, OrderedDict())[
+                tipo + SEPARADOR + comp
+            ] = ano_debito(comp)
     finally:
         wb.close()
 
-    return {doc: list(pares) for doc, pares in debitos.items()}
+    return {
+        doc: [texto for texto, _ in sorted(
+            pares.items(), key=lambda par: (-par[1], par[0])
+        )]
+        for doc, pares in debitos.items()
+    }
 
 
 def localizar_cabecalho(ws) -> tuple[int, int, int] | None:
