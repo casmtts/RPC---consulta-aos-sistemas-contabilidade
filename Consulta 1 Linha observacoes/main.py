@@ -367,17 +367,13 @@ def _tem_debitos(linha: dict) -> bool:
 def _arquivo_progresso(caminho_entrada: Path, aba: str = "") -> Path:
     """Arquivo de retomada ao lado da planilha de entrada."""
     sufixo = f"_{_sem_acento(aba)}" if aba else ""
-    return caminho_entrada.with_name(
-        f"{caminho_entrada.stem}_progresso{sufixo}.json"
-    )
+    return _pasta_relatorios() / f"{caminho_entrada.stem}_progresso{sufixo}.json"
 
 
 def _arquivo_progresso_revisao(caminho_entrada: Path, aba: str = "") -> Path:
     """Progresso exclusivo da revisão paralela (separado da consulta)."""
     sufixo = f"_{_sem_acento(aba)}" if aba else ""
-    return caminho_entrada.with_name(
-        f"{caminho_entrada.stem}_revisao_progresso{sufixo}.json"
-    )
+    return _pasta_relatorios() / f"{caminho_entrada.stem}_revisao_progresso{sufixo}.json"
 
 
 def _pasta_relatorios() -> Path:
