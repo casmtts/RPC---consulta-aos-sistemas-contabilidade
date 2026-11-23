@@ -33,7 +33,14 @@ A consulta continua **igual à versão REVISADA**. A mudança é na **saída**:
   continua gerando a planilha "Resultado" de sempre (uma linha por débito),
   mas **sem CNPJs**: documentos de 14 dígitos são descartados dessa saída.
 
-### Botão Revisar
+### Botões Revisar e Revisão completa
+
+- **Revisar**: aplica os débitos já obtidos e consulta somente os CPFs/CNPJs
+  com `OBSERVAÇÃO (débitos)` vazia **da aba selecionada**.
+- **Revisão completa**: reconulta **todos os documentos da aba selecionada**,
+  inclusive os que já têm débito preenchido. Use quando quiser refazer toda
+  a conferência da planilha (na aba `PF - Caliu`, são 2.022 CPFs distintos).
+
 
 Nesta versão o **Revisar** foi adaptado para investigar as observações em
 branco:

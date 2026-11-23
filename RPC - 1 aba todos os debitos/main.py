@@ -2716,9 +2716,12 @@ class MainWindow(QMainWindow):
             (self.worker is not None and self.worker.isRunning())
             or self._revisao_paralela_ativa
         )
-        self.botao_revisar.setEnabled(
-            not rodando and (bool(self.registros) or bool(self.resultados))
+        habilitado = not rodando and (
+            bool(self.registros) or bool(self.resultados)
         )
+        self.botao_revisar.setEnabled(habilitado)
+        if hasattr(self, "botao_revisao_completa"):
+            self.botao_revisao_completa.setEnabled(habilitado)
 
     def _carregar_resultados_salvos(self) -> None:
         """Mostra os resultados já gravados ao reabrir a planilha."""
@@ -2972,6 +2975,8 @@ class MainWindow(QMainWindow):
         linha_resultados = QHBoxLayout()
         self.botao_revisar = QPushButton("Revisar")
         self.botao_revisar.setEnabled(False)
+        if hasattr(self, "botao_revisao_completa"):
+            self.botao_revisao_completa.setEnabled(False)
         self.botao_revisar.setToolTip(
             "Após parar: consulta somente o que ficou faltando. "
             "Depois de concluído: reconulta erros, NAO VERIFICADO, "
@@ -2979,6 +2984,14 @@ class MainWindow(QMainWindow):
         )
         self.botao_revisar.clicked.connect(self.revisar)
         linha_resultados.addWidget(self.botao_revisar)
+        self.botao_revisao_completa = QPushButton("Revisão completa")
+        self.botao_revisao_completa.setEnabled(False)
+        self.botao_revisao_completa.setToolTip(
+            "Reconsulta TODOS os CPFs/CNPJs da aba selecionada, inclusive os "
+            "que já têm débito na OBSERVAÇÃO"
+        )
+        self.botao_revisao_completa.clicked.connect(self.revisao_completa)
+        linha_resultados.addWidget(self.botao_revisao_completa)
         linha_resultados.addStretch()
         dica_resultados = QLabel('PRESSIONE "ESC" 2x PARA PARAR CONSULTA')
         dica_resultados.setObjectName("dicaEspaco")
@@ -3693,6 +3706,8 @@ class MainWindow(QMainWindow):
         self.botao_salvar.setEnabled(False)
         self.botao_escolher.setEnabled(False)
         self.botao_revisar.setEnabled(False)
+        if hasattr(self, "botao_revisao_completa"):
+            self.botao_revisao_completa.setEnabled(False)
 
         # Na revisão paralela, estes documentos ficam só com o segundo worker.
         documentos_revisao: set[str] = set()
@@ -4051,6 +4066,8 @@ class MainWindow(QMainWindow):
         self.worker_revisao.aviso.connect(self._log)
         self._revisao_paralela_ativa = True
         self.botao_revisar.setEnabled(False)
+        if hasattr(self, "botao_revisao_completa"):
+            self.botao_revisao_completa.setEnabled(False)
         self.label_revisao_paralela.setText(
             f"Revisão paralela: iniciando ({len(registros)} pendente(s))..."
         )
@@ -4210,6 +4227,8 @@ class MainWindow(QMainWindow):
         self.botao_parar_resultados.setEnabled(True)
         self.botao_salvar.setEnabled(False)
         self.botao_revisar.setEnabled(False)
+        if hasattr(self, "botao_revisao_completa"):
+            self.botao_revisao_completa.setEnabled(False)
         self.botao_escolher.setEnabled(False)
 
         self.worker = ConsultaWorker(
@@ -4233,6 +4252,41 @@ class MainWindow(QMainWindow):
         self._log(
             f"Revisando {len(registros)} documento(s) com OBSERVAÇÃO vazia."
         )
+
+    def revisao_completa(self) -> None:
+        """Reconsulta TODOS os documentos da aba selecionada."""
+        if self.worker is not None and self.worker.isRunning():
+            return
+        if self.worker_revisao is not None and self.worker_revisao.isRunning():
+            return
+        if not self.registros:
+            QMessageBox.information(
+                self, "Revisão completa", "Nenhuma planilha carregada."
+            )
+            return
+
+        vistos: set[str] = set()
+        documentos: list[dict] = []
+        for registro in self.registros:
+            documento = self._documento_registro(registro)
+            if not documento or documento in vistos:
+                continue
+            vistos.add(documento)
+            documentos.append(dict(registro))
+        if not documentos:
+            QMessageBox.information(
+                self, "Revisão completa",
+                "Nenhum CPF/CNPJ válido encontrado na aba selecionada.",
+            )
+            return
+
+        self._consulta_interrompida = False
+        self._revisao_concluida.clear()
+        self._log(
+            f"Revisão completa: {len(documentos)} documento(s) da aba "
+            f"'{self.combo_aba.currentText() if self.combo_aba.isEnabled() else ''}'."
+        )
+        self._iniciar_revisao_observacoes(documentos)
 
     def revisar(self) -> None:
         """Após uma parada, consulta só o que falta; senão, os itens pendentes."""
@@ -4383,6 +4437,8 @@ class MainWindow(QMainWindow):
         self.botao_parar_resultados.setEnabled(True)
         self.botao_salvar.setEnabled(False)
         self.botao_revisar.setEnabled(False)
+        if hasattr(self, "botao_revisao_completa"):
+            self.botao_revisao_completa.setEnabled(False)
         self.botao_escolher.setEnabled(False)
 
         self.worker = ConsultaWorker(

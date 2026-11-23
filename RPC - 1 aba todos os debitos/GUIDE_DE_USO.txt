@@ -22,8 +22,12 @@ O QUE MUDOU NESTA VERSÃO
       planilha "Resultado" padrão — mas SEM CNPJs (documentos de 14 dígitos
       são descartados dessa saída).
 
-    BOTÃO REVISAR (nesta versão)
+    BOTÕES REVISAR / REVISÃO COMPLETA (nesta versão)
     -----------------------------------------------------------------------------
+    - Revisar: consulta só os documentos com OBSERVAÇÃO vazia da aba atual.
+    - Revisão completa: reconulta TODOS os CPFs/CNPJs da aba selecionada,
+      inclusive os que já têm débito preenchido.
+
     - 1) Aplica ao arquivo destino os débitos JÁ obtidos na sessão (sem consulta).
     - 2) Consulta, em modo invisível, somente os documentos que ainda estão
       com a coluna OBSERVAÇÃO vazia — APENAS da aba selecionada no programa
