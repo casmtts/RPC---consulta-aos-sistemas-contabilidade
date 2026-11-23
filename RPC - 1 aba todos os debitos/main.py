@@ -2770,9 +2770,15 @@ class MainWindow(QMainWindow):
         )
         self.botao_reabrir.clicked.connect(self.reabrir_ultima_planilha)
         self.botao_reabrir.setEnabled(False)
+        self.botao_limpar_progresso = QPushButton("Limpar progresso")
+        self.botao_limpar_progresso.setToolTip(
+            "Apaga o progresso desta aba para começar do zero"
+        )
+        self.botao_limpar_progresso.clicked.connect(self.limpar_progresso)
         linha_arquivo.addWidget(self.campo_arquivo)
         linha_arquivo.addWidget(self.botao_escolher)
         linha_arquivo.addWidget(self.botao_reabrir)
+        linha_arquivo.addWidget(self.botao_limpar_progresso)
         entrada_layout.addLayout(linha_arquivo)
 
         linha_aba = QHBoxLayout()
@@ -3096,6 +3102,9 @@ class MainWindow(QMainWindow):
         caixa.exec()
         if caixa.clickedButton() is botao_sim:
             return True
+        if caixa.clickedButton() is None:
+            # ESC ou fechar a caixa: mantem a opcao segura (retomar).
+            return padrao_sim
         if confirmar_nao:
             # Confirmação extra para não descartar o progresso por engano.
             confirma = QMessageBox()
@@ -3324,6 +3333,34 @@ class MainWindow(QMainWindow):
         if caminho:
             self._abrir_planilha(caminho)
 
+    def limpar_progresso(self) -> None:
+        """Apaga o progresso da aba atual (ação explícita do usuário)."""
+        if not self.caminho_entrada:
+            return
+        aba = self.combo_aba.currentText() if self.combo_aba.isEnabled() else ""
+        if not self._pergunta_sim_nao(
+            "Limpar progresso",
+            f"Apagar o progresso salvo da aba '{aba or 'padrão'}'?\n\n"
+            "A próxima execução começará do zero.",
+            padrao_sim=False,
+        ):
+            return
+        arquivos = [
+            _arquivo_progresso(self.caminho_entrada, aba),
+            _arquivo_progresso_revisao(self.caminho_entrada, aba),
+        ]
+        try:
+            for arquivo in arquivos:
+                if arquivo.exists():
+                    arquivo.unlink()
+        except Exception as exc:  # noqa: BLE001
+            QMessageBox.warning(self, "Limpar progresso", str(exc))
+            return
+        self.resultados = []
+        self.tabela_resultados.setRowCount(0)
+        self._log("Progresso limpo — a próxima execução começa do zero.")
+        self.statusBar().showMessage("Progresso limpo.")
+
     def reabrir_ultima_planilha(self, silent: bool = False) -> None:
         """Abre a planilha base desta versão (ou a última usada, se não houver)."""
         if PLANILHA_BASE.exists():
@@ -3479,31 +3516,18 @@ class MainWindow(QMainWindow):
                 detalhe = " (o último registro será checado novamente)"
             refazer = max(1, min(refazer, len(self.registros)))
 
-            resposta = self._pergunta_sim_nao(
-                "Retomar consulta",
-                f"Existe um progresso salvo de {processados} de "
-                f"{len(self.registros)} registros.\n\n"
-                f"Deseja continuar? O registro {refazer} será consultado "
-                f"novamente{detalhe}.",
-                padrao_sim=True,
-                confirmar_nao=True,
+            # Retomagem AUTOMÁTICA: a caixa antiga podia ser fechada com ESC
+            # e o programa interpretava isso como "descartar o progresso".
+            indice_inicial = refazer - 1
+            # Descarta os resultados do registro que será refeito.
+            resultados_iniciais = [
+                item for item in progresso["resultados"]
+                if int(item.get("_indice") or 0) < refazer
+            ]
+            self._log(
+                f"Retomando automaticamente no registro {refazer} de "
+                f"{len(self.registros)}{detalhe}."
             )
-            if resposta:
-                indice_inicial = refazer - 1
-                # Descarta os resultados do registro que será refeito.
-                resultados_iniciais = [
-                    item for item in progresso["resultados"]
-                    if int(item.get("_indice") or 0) < refazer
-                ]
-                self._log(
-                    f"Retomando no registro {refazer} de {len(self.registros)}"
-                    f"{detalhe}."
-                )
-            else:
-                salvar_progresso(
-                    arquivo_progresso, 0, len(self.registros), [],
-                    entrada=entrada, aba=aba,
-                )
         elif progresso and progresso["processados"] >= len(self.registros):
             salvar_progresso(
                 arquivo_progresso, 0, len(self.registros), [],
