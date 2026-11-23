@@ -2491,6 +2491,40 @@ def _configurar_tabela(tabela: QTableWidget, colunas: list[str],
     """)
 
 
+class SalvarSaidasWorker(QThread):
+    """Grava a OBSERVAÇÃO e a planilha Resultado fora da thread da interface.
+
+    Gravar dezenas de milhares de linhas com openpyxl leva minutos; fazendo
+    isso em _ao_finalizar (thread da GUI) o programa parecia travar ao parar.
+    """
+
+    concluido = pyqtSignal(str)
+
+    def __init__(self, entrada: Path, resultados: list[dict],
+                 destino_observacao: Path, destino_resultado: Path,
+                 parent=None):
+        super().__init__(parent)
+        self.entrada = entrada
+        self.resultados = list(resultados)
+        self.destino_observacao = destino_observacao
+        self.destino_resultado = destino_resultado
+
+    def run(self) -> None:
+        try:
+            gravar_relatorio_com_observacao(
+                self.entrada,
+                mapa_observacoes(self.resultados),
+                self.destino_observacao,
+            )
+            gravar_planilha(str(self.destino_resultado), self.resultados)
+            self.concluido.emit(
+                f"Relatorios salvos: {self.destino_observacao.name} e "
+                f"{self.destino_resultado.name}"
+            )
+        except Exception as exc:  # noqa: BLE001
+            self.concluido.emit(f"Erro ao salvar relatorios: {exc}")
+
+
 class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
@@ -2516,6 +2550,8 @@ class MainWindow(QMainWindow):
         self._revisao_paralela_ativa = False
         self._documentos_em_revisao: set[str] = set()
         self.worker: ConsultaWorker | None = None
+        self._salvador_saidas: SalvarSaidasWorker | None = None
+        self._salvamento_pendente = False
         self.config_worker: QThread | None = None
         self._config = QSettings("ConsultaDebitos", "ConsultaDebitos")
 
@@ -4234,11 +4270,7 @@ class MainWindow(QMainWindow):
             and tem_coluna_observacao(self.caminho_entrada)
         ):
             try:
-                total = self._preencher_observacoes_memoria()
-                self._log(
-                    f"OBSERVAÇÃO atualizada no arquivo destino ({total} CPF(s))."
-                )
-                self._gravar_resultado_classico()
+                self._agendar_salvamento_saidas()
             except Exception as exc:  # noqa: BLE001
                 self._log(f"Não foi possível atualizar a OBSERVAÇÃO: {exc}")
 
@@ -4303,12 +4335,7 @@ class MainWindow(QMainWindow):
             destino = _pasta_relatorios() / f"{nome}.xlsx"
         try:
             if relatorio_com_observacao:
-                gravar_relatorio_com_observacao(
-                    self.caminho_entrada,
-                    mapa_observacoes(self.resultados),
-                    destino,
-                )
-                self._gravar_resultado_classico()
+                self._agendar_salvamento_saidas()
             else:
                 gravar_planilha(str(destino), self.resultados)
         except Exception as exc:  # noqa: BLE001
@@ -4334,6 +4361,38 @@ class MainWindow(QMainWindow):
         destino = _pasta_relatorios() / f"{stem}_resultado.xlsx"
         gravar_planilha(str(destino), self.resultados)
         return destino
+
+    def _limpar_salvador_saidas(self) -> None:
+        self._salvador_saidas = None
+        if self._salvamento_pendente:
+            self._salvamento_pendente = False
+            self._agendar_salvamento_saidas()
+
+    def _agendar_salvamento_saidas(self) -> None:
+        """Dispara a gravacao dos dois relatorios em segundo plano."""
+        if not (
+            self.caminho_entrada
+            and self.caminho_entrada.suffix.lower() in (".xlsx", ".xlsm")
+            and tem_coluna_observacao(self.caminho_entrada)
+        ):
+            return
+        if self._salvador_saidas is not None and self._salvador_saidas.isRunning():
+            self._salvamento_pendente = True
+            self._log("Ja ha um salvamento em andamento; sera refeito ao terminar.")
+            return
+        stem = self.caminho_entrada.stem
+        observacao = (
+            _pasta_relatorios() / f"{stem}_1_LINHA_TODOS_OS_DEBITOS.xlsx"
+        )
+        resultado = _pasta_relatorios() / f"{stem}_resultado.xlsx"
+        self._salvador_saidas = SalvarSaidasWorker(
+            self.caminho_entrada, self.resultados, observacao, resultado, self
+        )
+        self._salvador_saidas.concluido.connect(self._log)
+        self._salvador_saidas.finished.connect(self._limpar_salvador_saidas)
+        self._salvador_saidas.start()
+        self._log("Salvando relatorios em segundo plano...")
+        self.statusBar().showMessage("Salvando relatorios em segundo plano...")
 
     def salvar_resultado(self) -> None:
         if not self.resultados:
@@ -4370,13 +4429,7 @@ class MainWindow(QMainWindow):
 
         try:
             if relatorio_com_observacao:
-                gravar_relatorio_com_observacao(
-                    self.caminho_entrada,
-                    mapa_observacoes(self.resultados),
-                    destino,
-                )
-                classico = self._gravar_resultado_classico()
-                self._log(f"Planilha Resultado (por débito) salva em: {classico}")
+                self._agendar_salvamento_saidas()
             else:
                 destino = gravar_planilha(caminho, self.resultados)
         except PermissionError:
@@ -4399,6 +4452,8 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(mensagem)
 
     def closeEvent(self, event) -> None:  # noqa: N802
+        if self._salvador_saidas is not None and self._salvador_saidas.isRunning():
+            self._salvador_saidas.wait(2000)
         if self.worker_revisao is not None and self.worker_revisao.isRunning():
             self.worker_revisao.stop()
             self.worker_revisao.wait(3000)
