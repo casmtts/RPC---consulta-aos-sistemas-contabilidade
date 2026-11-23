@@ -117,6 +117,14 @@ _SESSAO_SITE_LOCK = threading.Lock()
 # Papel da marcação "em revisão" nas células da tabela.
 _MARCA_REVISAO = Qt.ItemDataRole.UserRole + 20
 
+# A tela de Resultados mostra no maximo este numero de linhas: manter um
+# QTableWidgetItem por debito (dezenas de milhares) consumia gigabytes de RAM.
+MAX_LINHAS_TABELA = 3000
+# O progresso e reescrito no maximo a cada poucos segundos (o arquivo chega
+# a dezenas de MB); o sinalizador em_andamento garante a retomagem segura.
+INTERVALO_SALVAMENTO_PROGRESSO = 2.0
+_ULTIMO_SALVAMENTO_PROGRESSO = 0.0
+
 
 def _pincel_revisao() -> QBrush:
     """Pincel laranja com faixas diagonais (aspecto de 'em obra')."""
@@ -385,13 +393,24 @@ def _pasta_relatorios() -> Path:
 
 def salvar_progresso(caminho: Path, processados: int, total: int,
                      resultados: list[dict], em_andamento: bool = False,
-                     indice_atual: int = 0, entrada: str = "", aba: str = "") -> None:
+                     indice_atual: int = 0, entrada: str = "", aba: str = "",
+                     forcado: bool = False) -> None:
     """Grava o progresso, inclusive se uma consulta estava em andamento.
 
     ``em_andamento=True`` sinaliza que a pesquisa do ``indice_atual`` começou
     mas ainda não terminou — na retomada esse índice será sempre refeito.
     """
     import json
+    import time
+
+    global _ULTIMO_SALVAMENTO_PROGRESSO
+    agora = time.monotonic()
+    if (
+        not forcado
+        and agora - _ULTIMO_SALVAMENTO_PROGRESSO < INTERVALO_SALVAMENTO_PROGRESSO
+    ):
+        return
+    _ULTIMO_SALVAMENTO_PROGRESSO = agora
     dados = {
         "processados": processados,
         "total": total,
@@ -2085,6 +2104,15 @@ class ConsultaWorker(QThread):
                     pausa *= random.uniform(0.7, 1.3)
                 self.msleep(int(pausa * 1000))
 
+        # Gravação final forçada: o salvamento comum é espaçado no tempo e
+        # poderia deixar de registrar o último item concluído.
+        if self.arquivo_progresso is not None:
+            salvar_progresso(
+                self.arquivo_progresso, processados, total, self.resultados,
+                em_andamento=bool(self._parar), indice_atual=processados,
+                entrada=self.entrada, aba=self.aba, forcado=True,
+            )
+
         if self._parar:
             self.finalizado.emit(
                 f"Processamento interrompido: {ok} OK, {erros} com erro "
@@ -3531,6 +3559,8 @@ class MainWindow(QMainWindow):
         evitando que eles sejam adicionados uma segunda vez à lista.
         """
         posicao = self.tabela_resultados.rowCount()
+        if posicao >= MAX_LINHAS_TABELA:
+            return
         self.tabela_resultados.insertRow(posicao)
         self.tabela_resultados.setRowHeight(posicao, 30)
         for coluna, nome in enumerate(COLUNAS_SAIDA):
