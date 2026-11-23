@@ -570,19 +570,20 @@ def gravar_planilha(caminho: str, linhas: list[dict]) -> Path:
         ws.row_dimensions[1].height = 30
         ws.freeze_panes = "A2"
 
-        # Uma cor por PESSOA (todas as linhas do mesmo nome ficam iguais).
+        # Uma cor por CONTRIBUINTE (CPF/CNPJ): alterna ao mudar de pessoa.
         cores_pessoas = ("FFFFFFFF", "FFF2F2F2")  # branco / cinza-claro
-        cor_por_nome: dict[str, str] = {}
+        cor_por_pessoa: dict[str, str] = {}
         proxima_cor = 0
         linha_borda = Side(style="hair", color="FFD9D9D9")
 
         for linha in linhas:
-            nome = str(linha.get("Nome", "")).strip()
-            chave = nome or str(linha.get("CPF", "")).strip() or "(sem nome)"
-            if chave not in cor_por_nome:
-                cor_por_nome[chave] = cores_pessoas[proxima_cor % len(cores_pessoas)]
+            chave = re.sub(r"\D", "", str(linha.get("CPF", "")))
+            if not chave:
+                chave = str(linha.get("Nome", "")).strip() or "(sem nome)"
+            if chave not in cor_por_pessoa:
+                cor_por_pessoa[chave] = cores_pessoas[proxima_cor % len(cores_pessoas)]
                 proxima_cor += 1
-            cor = cor_por_nome[chave]
+            cor = cor_por_pessoa[chave]
 
             ws.append([linha.get(coluna, "") for coluna in COLUNAS_SAIDA])
             numero_linha = ws.max_row
