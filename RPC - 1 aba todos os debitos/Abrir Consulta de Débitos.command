@@ -2,7 +2,7 @@
 # Alternativa ao .app: duplo clique abre o programa automaticamente.
 # Não é preciso digitar nada — esta janela fecha sozinha ao sair do programa.
 
-cd "/Users/casmtts/Documents/TRIBUTOS E TERRA/RPC - Lista 1 aba todos debitos" || exit 1
+cd "/Users/casmtts/Documents/TRIBUTOS E TERRA/RPC - 1 aba todos os debitos" || exit 1
 
 PYTHON=""
 for candidato in /opt/homebrew/bin/python3 /usr/local/bin/python3 "$(command -v python3 2>/dev/null)" /usr/bin/python3; do
