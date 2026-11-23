@@ -3517,7 +3517,11 @@ class MainWindow(QMainWindow):
         """
         posicao = self.tabela_resultados.rowCount()
         if posicao >= MAX_LINHAS_TABELA:
-            return
+            # Janela deslizante: descarta a linha mais antiga para que a tabela
+            # continue mostrando o que esta sendo consultado agora, mantendo
+            # o consumo de memoria limitado.
+            self.tabela_resultados.removeRow(0)
+            posicao = self.tabela_resultados.rowCount()
         self.tabela_resultados.insertRow(posicao)
         self.tabela_resultados.setRowHeight(posicao, 30)
         for coluna, nome in enumerate(COLUNAS_SAIDA):
