@@ -8,7 +8,7 @@ O QUE MUDOU NESTA VERSÃO
     - A consulta continua igual à versão REVISADA.
     - Ao SALVAR, se a planilha de entrada tiver a coluna
       "OBSERVAÇÃO (débitos)", o programa preenche SEMPRE o arquivo
-      relatorios/RELATORIO_CONTABILIDADE_2022_ANALISTAS_COM_DEBITOS.xlsx.
+      relatorios/RELATORIO_CONTABILIDADE_2022_ANALISTAS_1_LINHA_TODOS_OS_DEBITOS.xlsx.
       Não abre "Salvar como" e NÃO CRIA OUTRO arquivo: se ele já existir,
       a coluna dele é atualizada. Todas as abas dos analistas são preservadas.
     - Para cada CPF/CNPJ, a coluna OBSERVAÇÃO recebe TODOS os débitos
@@ -37,7 +37,7 @@ O QUE MUDOU NESTA VERSÃO
     - Para preencher SEM consultar o site, rode na pasta:
           python3 preencher_observacao.py
       Ele usa a base "Análise e rastreio 2022 - cópia_resultado_parcial.xlsx"
-      e gera "relatorios/RELATORIO_CONTABILIDADE_2022_ANALISTAS_COM_DEBITOS.xlsx".
+      e gera "relatorios/RELATORIO_CONTABILIDADE_2022_ANALISTAS_1_LINHA_TODOS_OS_DEBITOS.xlsx".
       ATENÇÃO: essa base cobre somente a aba PF - Caliu. As demais abas
       precisam ser consultadas no programa para receber observações.=
 

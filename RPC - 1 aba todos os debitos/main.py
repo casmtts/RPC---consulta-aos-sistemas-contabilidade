@@ -3965,7 +3965,7 @@ class MainWindow(QMainWindow):
     def _arquivo_destino_observacao(self) -> Path:
         """Arquivo único onde a OBSERVAÇÃO (débitos) é preenchida."""
         stem = self.caminho_entrada.stem if self.caminho_entrada else PLANILHA_BASE.stem
-        return _pasta_relatorios() / f"{stem}_COM_DEBITOS.xlsx"
+        return _pasta_relatorios() / f"{stem}_1_LINHA_TODOS_OS_DEBITOS.xlsx"
 
     def _preencher_observacoes_memoria(self) -> int:
         """Aplica ao arquivo destino os débitos já obtidos na sessão."""
@@ -4287,7 +4287,7 @@ class MainWindow(QMainWindow):
         if relatorio_com_observacao:
             destino = (
                 _pasta_relatorios()
-                / f"{self.caminho_entrada.stem}_COM_DEBITOS.xlsx"
+                / f"{self.caminho_entrada.stem}_1_LINHA_TODOS_OS_DEBITOS.xlsx"
             )
         else:
             nome = (
@@ -4336,7 +4336,7 @@ class MainWindow(QMainWindow):
             return
 
         # Quando a planilha de entrada é o relatório contábil, o destino é
-        # SEMPRE o mesmo arquivo: RELATORIO_CONTABILIDADE_2022_ANALISTAS_COM_DEBITOS.xlsx.
+        # SEMPRE o mesmo arquivo: RELATORIO_CONTABILIDADE_2022_ANALISTAS_1_LINHA_TODOS_OS_DEBITOS.xlsx.
         # Ele é preenchido na coluna OBSERVAÇÃO (débitos); se já existir, é
         # atualizado (não é criado outro arquivo).
         relatorio_com_observacao = bool(
@@ -4348,7 +4348,7 @@ class MainWindow(QMainWindow):
         if relatorio_com_observacao:
             destino = (
                 _pasta_relatorios()
-                / f"{self.caminho_entrada.stem}_COM_DEBITOS.xlsx"
+                / f"{self.caminho_entrada.stem}_1_LINHA_TODOS_OS_DEBITOS.xlsx"
             )
             caminho = None
         else:
@@ -4379,7 +4379,7 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(
                 self, "Erro ao salvar",
                 "Não foi possível gravar. Feche a planilha "
-                "RELATORIO_CONTABILIDADE_2022_ANALISTAS_COM_DEBITOS.xlsx "
+                "RELATORIO_CONTABILIDADE_2022_ANALISTAS_1_LINHA_TODOS_OS_DEBITOS.xlsx "
                 "se ela estiver aberta.",
             )
             return

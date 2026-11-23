@@ -10,7 +10,7 @@ Débitos repetidos (parcelas com o mesmo tipo/competência) aparecem uma
 única vez, já que a observação mostra apenas esses dois campos.
 
 O arquivo de saída é sempre o mesmo:
-    relatorios/RELATORIO_CONTABILIDADE_2022_ANALISTAS_COM_DEBITOS.xlsx
+    relatorios/RELATORIO_CONTABILIDADE_2022_ANALISTAS_1_LINHA_TODOS_OS_DEBITOS.xlsx
 Se ele já existir, é atualizado — nunca é criado outro arquivo.
 
 Uso:
@@ -38,7 +38,7 @@ DEBITOS_PADRAO = (
 SAIDA_PADRAO = (
     BASE
     / "relatorios"
-    / "RELATORIO_CONTABILIDADE_2022_ANALISTAS_COM_DEBITOS.xlsx"
+    / "RELATORIO_CONTABILIDADE_2022_ANALISTAS_1_LINHA_TODOS_OS_DEBITOS.xlsx"
 )
 
 SEPARADOR = " – "  # tipo de débito – competência

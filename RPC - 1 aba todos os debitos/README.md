@@ -14,7 +14,7 @@ A consulta continua **igual à versão REVISADA**. A mudança é na **saída**:
 - Quando a planilha de entrada tem a coluna **`OBSERVAÇÃO (débitos)`** (como
   o `RELATORIO_CONTABILIDADE_2022_ANALISTAS.xlsx` desta pasta), o botão
   **Salvar resultado...** preenche **sempre o mesmo arquivo**:
-  `relatorios/RELATORIO_CONTABILIDADE_2022_ANALISTAS_COM_DEBITOS.xlsx`.
+  `relatorios/RELATORIO_CONTABILIDADE_2022_ANALISTAS_1_LINHA_TODOS_OS_DEBITOS.xlsx`.
   Ele não abre "Salvar como" e **não cria outro arquivo**: se o arquivo já
   existir, a coluna OBSERVAÇÃO dele é atualizada. As abas dos analistas são
   preservadas.
@@ -61,7 +61,7 @@ preenche o relatório sem precisar abrir o navegador:
 python3 preencher_observacao.py
 ```
 
-Saída (sempre a mesma): `relatorios/RELATORIO_CONTABILIDADE_2022_ANALISTAS_COM_DEBITOS.xlsx`.
+Saída (sempre a mesma): `relatorios/RELATORIO_CONTABILIDADE_2022_ANALISTAS_1_LINHA_TODOS_OS_DEBITOS.xlsx`.
 
 > **Atenção:** a base de débitos disponível veio de uma consulta parcial da
 > aba `PF - Caliu`. Por isso, as abas `PJ - Angela`, `PJ - Cid` e
