@@ -26,7 +26,10 @@ O QUE MUDOU NESTA VERSÃO
     -----------------------------------------------------------------------------
     - Revisar: consulta só os documentos com OBSERVAÇÃO vazia da aba atual.
     - Revisão completa: reconulta TODOS os CPFs/CNPJs da aba selecionada,
-      inclusive os que já têm débito preenchido.
+      inclusive os que já têm débito preenchido. Agora consulta TODAS as
+      situacoes (nao so DEBITO) para ter contexto completo; porem so publica
+      no resultado os debitos EM ABERTO. Pagos/cancelados aparecem no log
+      como descartados da cobranca.
 
     - 1) Aplica ao arquivo destino os débitos JÁ obtidos na sessão (sem consulta).
     - 2) Consulta, em modo invisível, somente os documentos que ainda estão
@@ -60,7 +63,7 @@ O QUE MUDOU NESTA VERSÃO
         Abre o programa sozinho, sem precisar digitar nada.
 
    Alternativa pelo terminal (equivalente):
-    cd "RPC - Consulta de débitos - REVISADO"
+    cd "RPC - Consulta débitos ISS DIGITAL E IPTU"
     python3 main.py
 
    Toda a preparação do ambiente também pode ser feita pela própria janela,
@@ -154,3 +157,135 @@ O QUE MUDOU NESTA VERSÃO
    Ao clicar em Revisar, o programa tambem consulta os CIFs encontrados
    (tipo IMOVEL) para buscar campos que nao existiam antes e identificar
    quais IPTUs estao em aberto e em qual imovel (CIF).
+
+7. VERIFICAR PAGOS / DÍVIDAS COBRÁVEIS (NOVO)
+===============================================================================
+   CONSULTA COMPLETA (botao na aba CLASSIFICACAO E VERIFICACAO):
+   Executa em sequencia: 1) revisao completa de todos os documentos da aba
+   (todas as situacoes, so publica debitos em aberto), 2) classificacao de
+   pagos (inclusive debitos que so aparecem no site), 3) validacao de CIFs.
+   Gera os quatro relatorios de verificacao. ESC 2x para parar.
+   A revisao completa grava progresso próprio: ao executar de novo, retoma
+   SOMENTE os documentos sem resultado confirmado (os que falharam por
+   sessao/erro voltam para a fila). Para comecar do zero: Limpar progresso.
+
+   Botao "Verificar pagos" na aba CLASSIFICACAO E VERIFICACAO (3a aba, apos Consulta e Resultados).
+   Consulta TODAS as situacoes relevantes (PAGO, PAGO MANUAL, COMPENSACAO,
+   DACAO, CANCELADO, PRESCRITO etc.) para nao deixar pagamento passar.
+
+   O que faz:
+     - Le os debitos ja listados na coluna "OBSERVAÇÃO (débitos)" da aba
+       selecionada (arquivo relatorios/..._1_LINHA_TODOS_OS_DEBITOS.xlsx).
+     - Reconulta cada CPF/CNPJ no site com os filtros de situação
+       DEBITO + PAGO (+ CANCELADO/PRESCRITO quando o site informa), para
+       descobrir a situação ATUAL de cada dívida.
+     - Cruza tipo de débito + competência e grava duas colunas novas:
+         PAGO? ......... PAGO / EM ABERTO / CANCELADO / PRESCRITO /
+                         NÃO CONFIRMADO / NÃO VERIFICADO
+         COBRÁVEL? ..... SIM / NÃO / NÃO CONFIRMADO
+       Use COBRÁVEL? = SIM para saber quais dívidas o gestor ainda pode cobrar.
+
+   Arquivos gerados em relatorios/ (não sobrescrevem o relatório original):
+     - <planilha>_VERIFICACAO_PAGOS.xlsx  -> cópia do relatório com as colunas
+       PAGO? e COBRÁVEL? na mesma ordem dos débitos da OBSERVAÇÃO;
+     - <planilha>_DETALHE_PAGOS.xlsx      -> uma linha por débito, com a
+       situação encontrada no site, valores, CIF, ID Dívida e Vencimento.
+
+   Sem correspondência segura, o débito fica NÃO CONFIRMADO (nunca é dado
+   como pago ou cobrável "por chute"). Se a consulta falhar, fica
+   NÃO VERIFICADO. Use ESC 2x ou "Parar" para interromper; os resultados
+   parciais são salvos ao parar.
+
+   REGRA ANTI COBRANÇA INDEVIDA:
+   COBRÁVEL? = SIM somente para situacao claramente viva (debito, divida
+   ativa, ajuizado, consolidado, parcelado). QUALQUER pagamento encerra:
+   PAGO, PAGO MANUAL, PAGO PARCELAMENTO, PAGO POR COMPENSAÇÃO, PAGO POR
+   DAÇÃO, PAGO RESTITUIDO, AJUIZADO PAGO, DÍVIDA ATIVA PAGA, REMIDO,
+   QUITADO, BAIXADO. Também nao cobrar: PRESCRITO, CANCELADO, SUBSTITUÍDO,
+   ISENTO, IMUNE, NÃO TRIBUTÁVEL e suspensoes judicial/administrativa.
+   Valor devido zero com valor pago > 0 tambem é PAGO.
+   Situacao ambigua (parcelamento revertido/descumprido, boleto gerado,
+   lancamento em AINF, em fiscalizacao, vazia) fica NÃO CONFIRMADO — nunca
+   entra como cobrável.
+
+   Foram levantadas TODAS as situacoes dos dois sistemas: 33 do ISS Digital
+   (usadas na consulta) e 27 do IPTU Digital. O arquivo _DETALHE_PAGOS.xlsx
+   tem a aba "Situações (auditoria)" com as 60 situacoes e o tratamento de
+   cada uma. Caso especial: RETIDO_DENTRO_MUNICIPIO_DEBITO contem "debito"
+   mas o tributo foi retido na fonte -> NAO cobrar.
+
+8b. BOTAO "1 linha: ATIVADA/DESATIVADA" (aba Classificacao e Verificacao)
+===============================================================================
+   - ATIVADA (padrao): todos os debitos de cada pessoa sao gravados em UMA
+     unica linha na coluna OBSERVACAO, no arquivo
+     relatorios/..._1_LINHA_TODOS_OS_DEBITOS.xlsx.
+   - DESATIVADA: a OBSERVACAO nao e alterada; o resultado vai no formato
+     classico (uma linha por debito) em relatorios/..._resultado.xlsx.
+   - Clique no botao para alternar. A escolha fica salva.
+
+8c. ABA AVISO (todos os relatorios)
+===============================================================================
+   Todo arquivo gerado comeca com a aba AVISO, com a Origem dos dados (site
+   oficial Desenvolve Cidade - ISS Digital / IPTU Digital), o cruzamento e a
+   classificacao derivados da base do site, natureza auxiliar do relatorio,
+   ressalva de atualidade, responsabilidade da decisao final do gestor e uso
+   interno. As abas dos analistas e os cabecalhos nao sao alterados.
+
+9. SEGURANCA CONTRA COBRANCA INDEVIDA
+===============================================================================
+   - regras_debito.py e a regra unica: so entra na OBSERVACAO o que tem
+     Status OK/VERIFICADO, sem Erro, tipo/competencia reais (nada de
+     "Sem debitos" ou "-").
+   - Arquivo de apoio: usa o MAIS RECENTE, ignora arquivos com mais
+     de 30 dias e grava sempre como
+     CLASSIFICADO — INDETERMINADO (nunca VERIFICADO).
+     Esses debitos ficam DISPONIVEIS no modulo novo ("Verificar pagos") para
+     analise e classificacao — nao sao descartados.
+     A coluna ERRO fica LIMPA: a situacao aparece no STATUS, nao como erro.
+     Progressos antigos com mensagens antigas no Erro sao limpos ao abrir.
+   - Quando a consulta confirma ausencia de debitos, a descricao e
+     "Sem debitos verificados" (Status VERIFICADO). Sem confirmacao, a
+     descricao e "Nao foi possivel verificar debitos" (Status NAO VERIFICADO).
+   - O Playwright so publica debitos quando confirma o documento na resposta.
+   - Modo HTTP confere CPF e nome; "sem debitos" por HTTP fica NAO VERIFICADO.
+   - Verificacao de pagos: so casa competencia com mes conhecido; conflito
+     entre debitos iguais fica NAO CONFIRMADO.
+   - As planilhas agora trazem a coluna "Situacao (site)" com o estado real
+     de cada debito (DEBITO, AJUIZADO, PAGO MANUAL, CANCELADO etc.).
+   - NIVEL DE ALERTA (com cores):
+       VERDE = cobravel (confirmado e em aberto);
+       LARANJA = indeterminado (o sistema nao consegue decidir) ou datas
+       inconsistentes da migracao (competencia 2022 / vencimento 2021);
+       AMARELO = pendente de analise / falha na consulta;
+       VERMELHO = NAO cobrar (pago, pago manual, cancelado, prescrito,
+       remido, suspenso etc. — todos com a mesma cor).
+     Legenda visivel na aba CLASSIFICACAO E VERIFICACAO.
+   - Ordem: debitos do MAIS NOVO para o mais velho (ano decrescente) na
+     OBSERVACAO, nas colunas cruzadas e no detalhe.
+   - Tipos de debito: 576 tipos levantados do site (arquivo tipos_debito_site.txt).
+     O cruzamento ignora acentos, (M), artigos e ordem das palavras, casando
+     nome descrito com codigo (TAXA_ALVARA...). ID Divida continua prioritario.
+   - Verificacao de CIFs: nunca reaproveita o resultado de outro CPF.
+
+8. VERIFICAR CIFS - O CIF É REAL? (NOVO)
+===============================================================================
+   Botao "Verificar CIFs" na aba CLASSIFICACAO E VERIFICACAO (depois de "Verificar pagos").
+
+   - Le os CIFs obtidos nas consultas de debito (de CPF ou CNPJ).
+   - Abre o Cadastro Imobiliario do IPTU Digital
+     (/iptu/#/cadastroImobiliario), digita o CPF/CNPJ no campo proprio e
+     clica em Pesquisar.
+   - Para cada CIF das dividas, grava:
+       CIF REAL? ..... SIM se o endereco tiver NUMERO ou LOTE preenchidos;
+                       NAO se estiver vazio ou sem numero e sem lote
+                       (CIF ficticia); NAO CONFIRMADO (nao apareceu);
+                       NAO VERIFICADO (falha na consulta)
+       ENDERECO (CIF)  endereco informado pelo cadastro
+   - O detalhe traz tambem inscricao imobiliaria e situacoes do cadastro
+     e do imovel.
+
+   Arquivos em relatorios/:
+     - <planilha>_VERIFICACAO_CIFS.xlsx (copia do resultado + colunas novas)
+     - <planilha>_DETALHE_CIFS.xlsx (um CIF por linha)
+
+   Use ESC 2x ou "Parar" para interromper; salva os resultados parciais.

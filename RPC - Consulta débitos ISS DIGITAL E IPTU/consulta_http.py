@@ -20,6 +20,7 @@ from datetime import datetime
 from typing import Dict, List
 
 from config import BASE_URL, HOME_URL, COOKIE_NAME
+from regras_debito import situacao_eh_debito
 
 DOMINIO_JWT = ".desenvolvecidade.com.br"
 DOMINIO_SESSAO = "santanadoaraguaia-pa.desenvolvecidade.com.br"
@@ -46,6 +47,42 @@ def _texto_limpo(fragmento: str) -> str:
     # html.unescape é muito lento (pode ser 5-10x mais lento)
     # O site ja devolve texto limpo em geral, entao podemos pular
     return sem_tags.strip()
+
+
+def _texto_visivel(fragmento: str) -> str:
+    """Texto da resposta sem scripts, estilos nem painéis ocultos.
+
+    O JSF mantém Mensagens de consultas anteriores em painéis escondidos;
+    ler esse texto gerava falso "sem débitos".
+    """
+    sem_ocultos = re.sub(
+        r"<(script|style)\b[^>]*>.*?</\1>", " ", fragmento, flags=re.I | re.S
+    )
+    # Campos hidden são elementos vazios: remove só a tag, nunca o conteúdo
+    # seguinte (senão apagaria texto visível legítimo).
+    sem_ocultos = re.sub(
+        r"<(?:input|meta|link|br|hr)\b[^>]*(?:hidden|display\s*:\s*none)[^>]*>",
+        " ", sem_ocultos, flags=re.I,
+    )
+    # Contêineres ocultos têm conteúdo: removem tag + conteúdo.
+    sem_ocultos = re.sub(
+        r"<(div|span|p|table|tr|td|section|ul|li|form)\b[^>]*"
+        r"(?:hidden|display\s*:\s*none)[^>]*>.*?</\1>",
+        " ", sem_ocultos, flags=re.I | re.S,
+    )
+    return _texto_limpo(sem_ocultos)
+
+
+def _valor_campo_resposta(pagina: str, sufixo: str) -> str:
+    """Lê o valor atual do campo do documento na resposta do servidor."""
+    for tag in re.findall(r"<input\b[^>]*>", pagina, re.I):
+        atributos = _atributos(tag)
+        if (
+            atributos.get("id", "").endswith(sufixo)
+            or atributos.get("name", "").endswith(sufixo)
+        ):
+            return str(atributos.get("value", ""))
+    return ""
 
 
 def _sem_acento(texto: str) -> str:
@@ -183,7 +220,7 @@ def _extrair_tabelas(pagina_html: str, somente_debito: bool = True) -> List[dict
     if somente_debito:
         debitos = [
             debito for debito in debitos
-            if _sem_acento(debito.get("situacao", "")).strip() == "debito"
+            if situacao_eh_debito(debito.get("situacao", ""))
             and debito["valor"] > 0
             and debito["pago"] <= 0
         ]
@@ -197,7 +234,7 @@ def consultar_debito_http(
     cookie_sessao: str = "",
     timeout: int = 30,
     tipo: str = "",
-    deve_parar=None,
+    deve_parar=None, situacoes=None,
 ) -> List[dict]:
     """Consulta um documento por HTTP puro (sem navegador)."""
     def verificar_parada() -> None:
@@ -278,7 +315,7 @@ def consultar_debito_http(
         dados[nome_ano] = str(datetime.now().year - 9)
     for atributos, _ in campos:
         if (atributos.get("name", "").endswith("situacaoDebito")
-                and atributos.get("value") in SITUACOES_ATIVAS):
+                and atributos.get("value") in (situacoes or SITUACOES_ATIVAS)):
             dados[atributos["name"]] = "true"
     dados[nome_botao] = "Pesquisar"
 
@@ -294,7 +331,28 @@ def consultar_debito_http(
             "A consulta foi redirecionada para a home — sessão inválida."
         )
 
-    texto = _texto_limpo(pagina_resposta).lower()
+    # Confirmação do documento e do contribuinte na resposta: sem isso, um
+    # resultado de outra sessão/CPF poderia ser publicado como deste CPF.
+    valor_documento = _valor_campo_resposta(pagina_resposta, sufixo_documento)
+    if valor_documento and "".join(c for c in valor_documento if c.isdigit()) != digitos:
+        raise ConsultaNaoVerificada(
+            f"A resposta está com o documento {valor_documento!r}, mas foi "
+            f"pedido {digitos} — resultado descartado."
+        )
+    visivel = _texto_visivel(pagina_resposta)
+    if nome.strip():
+        nome_norm = _sem_acento(nome)
+        visivel_norm = _sem_acento(visivel)
+        partes = [p for p in re.findall(r"[a-z]{4,}", nome_norm)][:3]
+        if nome_norm not in visivel_norm and not (
+            partes and all(parte in visivel_norm for parte in partes)
+        ):
+            raise ConsultaNaoVerificada(
+                "O nome do contribuinte da resposta não confere com a "
+                "planilha — resultado descartado."
+            )
+
+    texto = visivel.lower()
     if any(trecho in texto for trecho in (
         "nenhum registro", "nenhum debito", "nenhuma guia", "sem resultados",
         "nao foram encontrados", "não foram encontrados", "nenhum lancamento",
@@ -308,5 +366,12 @@ def consultar_debito_http(
             "A resposta HTTP não trouxe tabela de resultados nem mensagem "
             "de 'nenhum registro' — não é seguro afirmar que não há débitos."
         )
-    # Havia linhas, mas nenhuma era DÉBITO: sem débitos confirmado.
-    return _extrair_tabelas(pagina_resposta)
+    debitos = _extrair_tabelas(pagina_resposta)
+    if not debitos:
+        # Havia linhas, mas nenhuma era DÉBITO confirmado. Dívida ativa,
+        # ajuizado, pago etc. não podem virar "sem débitos".
+        raise ConsultaNaoVerificada(
+            "A resposta trouxe linhas, mas nenhuma com situação DÉBITO "
+            "confirmado — não é seguro afirmar que não há débitos."
+        )
+    return debitos

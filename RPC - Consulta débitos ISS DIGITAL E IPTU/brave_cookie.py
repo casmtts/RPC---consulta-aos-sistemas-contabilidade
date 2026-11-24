@@ -112,7 +112,7 @@ def _ler_cookies(caminho_db: Path, chave: bytes) -> dict[str, str]:
         # O host pode aparecer como nome exato ou como dominio (com ponto
         # inicial), dependendo de como o cookie foi gravado pelo navegador.
         registros = con.execute(
-            "SELECT name, value, encrypted_value FROM cookies "
+            "SELECT name, value, encrypted_value, host_key FROM cookies "
             "WHERE host_key IN (?, ?) AND name IN (?, ?) "
             "ORDER BY CASE WHEN host_key=? THEN 0 ELSE 1 END",
             (_HOST, "." + _HOST, *_NOMES, _HOST),
@@ -120,10 +120,15 @@ def _ler_cookies(caminho_db: Path, chave: bytes) -> dict[str, str]:
     finally:
         con.close()
 
-    # Um mesmo nome pode existir nos dois hosts; o host exato tem prioridade.
+    # Um mesmo nome pode existir nos dois hosts. O SQL já coloca o host
+    # exato primeiro: o PRIMEIRO valor válido vence. Sobrescrever com o
+    # registro do domínio com ponto poderia trocar o JSESSIONID por uma
+    # sessão diferente (de outro contribuinte).
     encontrados: dict[str, tuple[str, bytes]] = {}
-    for nome, valor_texto, valor_criptografado in registros:
-        if nome not in encontrados or valor_texto or valor_criptografado:
+    for nome, valor_texto, valor_criptografado, _host_key in registros:
+        if nome in encontrados:
+            continue
+        if valor_texto or valor_criptografado:
             encontrados[nome] = (valor_texto, valor_criptografado or b"")
 
     faltando = [nome for nome in _NOMES if not encontrados.get(nome)]

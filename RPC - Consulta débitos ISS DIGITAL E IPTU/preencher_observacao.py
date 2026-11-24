@@ -30,10 +30,15 @@ from openpyxl import load_workbook
 from openpyxl.styles import Alignment
 from openpyxl.utils import get_column_letter
 
+from disclaimer import adicionar_aviso
+from regras_debito import eh_debito_cobravel
+
 BASE = Path(__file__).resolve().parent
 RELATORIO_PADRAO = BASE / "RELATORIO_CONTABILIDADE_2022_ANALISTAS.xlsx"
 DEBITOS_PADRAO = (
-    BASE / "relatorios" / "Análise e rastreio 2022 - cópia_resultado_parcial.xlsx"
+    BASE
+    / "relatorios"
+    / "RELATORIO_CONTABILIDADE_2022_ANALISTAS_resultado.xlsx"
 )
 SAIDA_PADRAO = (
     BASE
@@ -117,14 +122,16 @@ def carregar_debitos(caminho: Path) -> dict[str, list[str]]:
             if len(doc) not in (11, 14):
                 continue
 
-            status = normalizar(linha[col_status]) if col_status is not None and col_status < len(linha) else ""
+            status = str(linha[col_status] or "") if col_status is not None and col_status < len(linha) else ""
             erro = str(linha[col_erro] or "").strip() if col_erro is not None and col_erro < len(linha) else ""
-            if status in {"erro", "nao verificado"} or erro:
-                continue
-
             tipo = str(linha[col_tipo] or "").strip()
             comp = str(linha[col_comp] or "").strip()
-            if not tipo or not comp:
+            # Regra compartilhada: rejeita "Sem débitos", "-", status
+            # diverso de OK/VERIFICADO, erro/ressalva e legado não confirmado.
+            if not eh_debito_cobravel({
+                "Status": status, "Erro": erro,
+                "Tipo de Débito": tipo, "Competência": comp,
+            }):
                 continue
             debitos.setdefault(doc, OrderedDict())[
                 tipo + SEPARADOR + comp
@@ -261,6 +268,7 @@ def preencher(relatorio: Path, debitos: dict[str, list[str]], destino: Path) -> 
             break
 
     destino.parent.mkdir(parents=True, exist_ok=True)
+    adicionar_aviso(wb)
     wb.save(destino)
     return contagens
 

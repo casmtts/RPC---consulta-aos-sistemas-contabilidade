@@ -12,3 +12,7 @@ COOKIE_NAME = "__Secure-DA"
 
 # Intervalo entre consultas, em segundos, para não sobrecarregar o site
 EXTRACTION_DELAY = 1.5
+
+# Cadastro Imobiliário do IPTU Digital: consulta por CPF/CNPJ que devolve os
+# imóveis (CIF) com endereço — usada para verificar se o CIF é real.
+IPTU_URL = "https://santanadoaraguaia-pa.desenvolvecidade.com.br/iptu/#/cadastroImobiliario"

@@ -65,6 +65,27 @@ from brave_cookie import (
     DOMINIO_JWT,
     DOMINIO_SESSAO,
 )
+from verificar_pagos import (
+    VerificarPagosWorker,
+    caminhos_saida,
+    registros_com_observacao,
+    registros_para_analise,
+    chave_tipo,
+    chave_competencia,
+    classificar_situacao,
+    SITUACOES_VERIFICACAO_ESSENCIAIS,
+)
+from verificar_cifs import (
+    VerificarCifsWorker,
+    caminhos_saida_cifs,
+    carregar_cifs,
+    consultar_imoveis,
+)
+from disclaimer import adicionar_aviso
+from regras_debito import (
+    eh_debito_cobravel, situacao_eh_debito, STATUS_PENDENTE,
+    mensagem_amigavel_erro,
+)
 
 # Relê o token do Brave quando falta menos de 1 minuto para expirar.
 MARGEM_RENOVACAO_TOKEN = 60
@@ -98,7 +119,7 @@ PLANILLA_CABECALOS = [
     "Nome", "CPF", "Tipo de Débito", "Competência", "Valor (R$)", "Status",
     "CIF", "ID Dívida", "Vencimento",
 ]
-COLUNAS_SAIDA = PLANILLA_CABECALOS + ["Erro"]
+COLUNAS_SAIDA = PLANILLA_CABECALOS + ["Erro", "Situação (site)"]
 SEPARADOR_CSV = ";"
 
 # Planilha base desta versão: o relatório contábil copiado para esta pasta.
@@ -385,6 +406,14 @@ def _arquivo_progresso_revisao(caminho_entrada: Path, aba: str = "") -> Path:
     return _pasta_relatorios() / f"{caminho_entrada.stem}_revisao_progresso{sufixo}.json"
 
 
+def _arquivo_progresso_revisao_completa(caminho_entrada: Path, aba: str = "") -> Path:
+    """Progresso da revisão completa, para retomar no documento seguinte."""
+    sufixo = f"_{_sem_acento(aba)}" if aba else ""
+    return _pasta_relatorios() / (
+        f"{caminho_entrada.stem}_revisao_completa_progresso{sufixo}.json"
+    )
+
+
 def _pasta_relatorios() -> Path:
     """Pasta 'relatorios' dentro da pasta do programa (criada se preciso)."""
     pasta = Path(__file__).resolve().parent / "relatorios"
@@ -493,21 +522,34 @@ def _ordenar_resultados(resultados: list[dict]) -> list[dict]:
 
 
 _DEBITOS_ANTIGOS: dict[str, list[dict]] | None = None
+_DEBITOS_ANTIGOS_CHAVE = None
+
+
+# Um snapshot com mais de 30 dias não pode alimentar cobrança: dívidas
+# pagas/canceladas nesse intervalo apareceriam como em aberto.
+IDADE_MAXIMA_SNAPSHOT_DIAS = 30
 
 
 def _caminho_relatorio_antigo() -> Path | None:
-    """Localiza o relatório de débitos do sistema legado."""
+    """Localiza o relatório MAIS RECENTE de débitos do sistema legado."""
+    import time
+
     padrao = "relatorio-lancamentos-debito-divida-ativa-*.csv"
     bases = (
         Path(__file__).resolve().parent,
         Path(__file__).resolve().parent.parent,
         Path.cwd(),
     )
+    encontrados: list[Path] = []
     for base in bases:
-        encontrados = sorted(base.glob(padrao))
-        if encontrados:
-            return encontrados[-1]
-    return None
+        encontrados.extend(base.glob(padrao))
+    if not encontrados:
+        return None
+    mais_recente = max(encontrados, key=lambda caminho: caminho.stat().st_mtime)
+    idade_dias = (time.time() - mais_recente.stat().st_mtime) / 86400
+    if idade_dias > IDADE_MAXIMA_SNAPSHOT_DIAS:
+        return None
+    return mais_recente
 
 
 def _debitos_relatorio_antigo() -> dict[str, list[dict]]:
@@ -516,11 +558,12 @@ def _debitos_relatorio_antigo() -> dict[str, list[dict]]:
     Os CPFs fictícios do sistema legado não são aceitos pelo site, mas os
     débitos deles estão nesse relatório. Carregado uma vez por processo.
     """
-    global _DEBITOS_ANTIGOS
-    if _DEBITOS_ANTIGOS is not None:
+    global _DEBITOS_ANTIGOS, _DEBITOS_ANTIGOS_CHAVE
+    caminho = _caminho_relatorio_antigo()
+    chave = (str(caminho), caminho.stat().st_mtime) if caminho else None
+    if _DEBITOS_ANTIGOS is not None and _DEBITOS_ANTIGOS_CHAVE == chave:
         return _DEBITOS_ANTIGOS
     dados: dict[str, list[dict]] = {}
-    caminho = _caminho_relatorio_antigo()
     if caminho is not None:
         try:
             with open(
@@ -541,6 +584,20 @@ def _debitos_relatorio_antigo() -> dict[str, list[dict]]:
                         .strip()
                         .upper()
                         != "DÉBITO"
+                    ):
+                        continue
+                    # Se a dívida ativa foi paga/cancelada/prescrita, o
+                    # débito não pode virar cobrança mesmo constando no
+                    # snapshot como DÉBITO.
+                    situacao_divida = _sem_acento(
+                        registro.get("Situação Atual da Dívida Ativa", "")
+                    ).strip()
+                    if any(
+                        termo in situacao_divida
+                        for termo in (
+                            "pago", "paga", "cancelad", "prescrit",
+                            "remid", "baixad", "quitad",
+                        )
                     ):
                         continue
                     digitos = "".join(
@@ -565,10 +622,15 @@ def _debitos_relatorio_antigo() -> dict[str, list[dict]]:
                         "vencimento": str(
                             registro.get("Vencimento do Débito", "")
                         ).strip(),
+                        "situacao": str(
+                            registro.get("Situação Atual do Débito", "")
+                        ).strip(),
+                        "_pendente_confirmacao": True,
                     })
         except Exception:  # noqa: BLE001
             pass
     _DEBITOS_ANTIGOS = dados
+    _DEBITOS_ANTIGOS_CHAVE = chave
     return dados
 
 
@@ -587,13 +649,10 @@ def mapa_observacoes(linhas: list[dict]) -> dict[str, list[str]]:
         documento = re.sub(r"\D", "", str(item.get("CPF", "")))
         if len(documento) not in (11, 14):
             continue
+        if not eh_debito_cobravel(item):
+            continue
         tipo = str(item.get("Tipo de Débito", "") or "").strip()
         competencia = str(item.get("Competência", "") or "").strip()
-        if not tipo or not competencia:
-            continue
-        status = str(item.get("Status", "") or "").strip().lower()
-        if status in ("erro", "nao verificado") or item.get("Erro"):
-            continue
         mapa.setdefault(documento, OrderedDict())[
             f"{tipo} – {competencia}"
         ] = _ano_debito(item)
@@ -668,15 +727,17 @@ def gravar_planilha(caminho: str, linhas: list[dict]) -> Path:
                 celula.alignment = Alignment(vertical="center")
 
                 if nome_coluna == "Valor (R$)":
-                    # Arredonda a 2 casas e usa o símbolo entre aspas: sem
-                    # aspas o Excel pode interpretar a letra R e mostrar RR$.
-                    celula.value = round(
-                        _para_numero(linha.get(nome_coluna, "")), 2
-                    )
-                    celula.number_format = '"R$" #.##0,00'
+                    # Grava como TEXTO já formatado. Um formato numérico
+                    # "#.##0,00" muda com o idioma do Excel e pode exibir
+                    # "R$ 253,910" em vez de "R$ 253,91".
+                    valor = _para_numero(linha.get(nome_coluna, ""))
+                    celula.value = f"R$ {valor:.2f}".replace(".", ",")
+                    celula.number_format = "General"
                     celula.alignment = Alignment(
                         horizontal="right", vertical="center"
                     )
+                elif nome_coluna == "Erro":
+                    celula.value = mensagem_amigavel_erro(celula.value)
                 elif nome_coluna in ("CPF", "Competência", "Status"):
                     celula.alignment = Alignment(
                         horizontal="center", vertical="center"
@@ -685,16 +746,26 @@ def gravar_planilha(caminho: str, linhas: list[dict]) -> Path:
 
         ultima_coluna = get_column_letter(len(COLUNAS_SAIDA))
         ws.auto_filter.ref = f"A1:{ultima_coluna}{max(2, ws.max_row)}"
-        larguras = (26, 20, 46, 14, 16, 22, 12, 14, 14, 42)
+        larguras = (26, 20, 46, 14, 16, 22, 12, 14, 14, 42, 26)
         for indice, largura in enumerate(larguras, start=1):
             ws.column_dimensions[get_column_letter(indice)].width = largura
 
+        # O relatório parcial é a lista de trabalho do gestor: já sai com
+        # Status colorido, MOTIVO e duplicatas destacadas, para uma regravação
+        # pelo programa não desfazer essa classificação.
+        if "resultado_parcial" in caminho.name:
+            try:
+                from formatar_parcial import formatar_parcial
+                formatar_parcial(ws, linhas)
+            except Exception:  # noqa: BLE001
+                pass
+        adicionar_aviso(wb)
         wb.save(caminho)
     else:
         with caminho.open("w", encoding="utf-8-sig", newline="") as arquivo:
             escritor = csv.DictWriter(
                 arquivo,
-                fieldnames=COLUNAS_SAIDA,
+                fieldnames=COLUNAS_SAIDA + ["AVISO"],
                 delimiter=SEPARADOR_CSV,
                 extrasaction="ignore",
             )
@@ -703,6 +774,14 @@ def gravar_planilha(caminho: str, linhas: list[dict]) -> Path:
             linhas_csv = []
             for linha in linhas:
                 copia = dict(linha)
+                # CSV não tem aba AVISO: o aviso acompanha cada linha.
+                copia["AVISO"] = (
+                    "Dados do ISS Digital/Desenvolve Cidade — relatório "
+                    "auxiliar, não é certidão nem prova de pagamento; "
+                    "decisão final do gestor público."
+                )
+                if "Erro" in copia:
+                    copia["Erro"] = mensagem_amigavel_erro(copia["Erro"])
                 if "Valor (R$)" in copia:
                     copia["Valor (R$)"] = (
                         f"{_para_numero(copia['Valor (R$)']):.2f}"
@@ -835,13 +914,21 @@ def _para_numero(texto: str) -> float:
     elif "," in limpo:
         limpo = limpo.replace(",", ".")
     try:
-        return float(limpo)
+        # Valores monetários: no máximo 2 casas decimais. Sem isso, um texto
+        # como "693,910" podia virar "R$ 693,910" na saída.
+        return round(float(limpo), 2)
     except ValueError:
         return 0.0
 
 
-def _extrair_tabelas(page) -> list[dict]:
-    """Extrai débitos das tabelas da página."""
+def _extrair_tabelas(page, incluir_pagos: bool = False) -> list[dict]:
+    """Extrai débitos das tabelas da página.
+
+    Por padrão, só entram dívidas em aberto (situação DÉBITO). No modo
+    ``incluir_pagos`` — usado pela verificação de pagos — todas as linhas
+    são preservadas, com a situação original, para que cada débito da
+    OBSERVAÇÃO possa ser comparado ao que o site informa hoje.
+    """
     debitos: list[dict] = []
     for tabela in page.query_selector_all("table"):
         linhas = tabela.query_selector_all("tr")
@@ -891,13 +978,22 @@ def _extrair_tabelas(page) -> list[dict]:
                 "pago": _para_numero(_valor_por_chaves(item, ["pago (r$)"])),
             })
 
+    if incluir_pagos:
+        # Verificação de cobrabilidade: preserva TODAS as situações (paga,
+        # cancelada, prescrita, dívida ativa...) para cruzar com a
+        # OBSERVAÇÃO e decidir se o gestor ainda pode cobrar cada débito.
+        return [
+            debito for debito in debitos
+            if debito.get("tipo_debito") and debito.get("competencia")
+        ]
+
     # Só entram dívidas REALMENTE em aberto: situação exatamente DÉBITO,
     # valor devido maior que zero e nenhum valor pago. Dívida ativa,
     # ajuizado, pago, cancelado etc. ficam de fora — mesmo que o site
     # restaure esses filtros na sessão depois do AJAX.
     debitos = [
         debito for debito in debitos
-        if _sem_acento(debito.get("situacao", "")).strip() == "debito"
+        if situacao_eh_debito(debito.get("situacao", ""))
         and debito["valor"] > 0
         and debito["pago"] <= 0
     ]
@@ -971,6 +1067,9 @@ SITUACOES_ATIVAS = ("DEBITO",)
 SITUACOES_PAGAS_OU_ENCERRADAS = (
     "PAGO", "CANCELADO", "PRESCRITO", "REMIDO", "BAIXADO", "QUITADO",
 )
+# Na verificação de cobrabilidade, o site precisa devolver TAMBÉM as
+# situações que encerram a dívida; senão não há como cruzar os dados.
+SITUACOES_VERIFICACAO = SITUACOES_VERIFICACAO_ESSENCIAIS
 
 
 def _tabela_resultados(pagina):
@@ -1048,19 +1147,14 @@ def _sessao_expirada(pagina, incluir_oculto: bool = False) -> bool:
         except Exception:  # noqa: BLE001
             return False
 
+    # innerText contém somente texto visível e abrange qualquer elemento
+    # (th, h1, label...), ao contrário da lista antiga de tags.
     return pagina.evaluate("""() => {
-        for (const elemento of document.querySelectorAll('div, span, p, td')) {
-            const estilo = window.getComputedStyle(elemento);
-            if (estilo.display === 'none' || estilo.visibility === 'hidden' ||
-                    elemento.getClientRects().length === 0) {
-                continue;
-            }
-            const texto = (elemento.textContent || '').trim().toLowerCase();
-            if (texto.includes('sua sessão expirou') || texto.includes('sua sessao expirou')) {
-                return true;
-            }
-        }
-        return false;
+        const texto = (document.body ? document.body.innerText : '').toLowerCase();
+        return texto.includes('sua sessão expirou') ||
+               texto.includes('sua sessao expirou') ||
+               texto.includes('faça o login novamente') ||
+               texto.includes('faca o login novamente');
     }""")
 
 
@@ -1163,35 +1257,46 @@ def _aplicar_periodo(pagina) -> None:
         pass
 
 
-def _normalizar_situacao(pagina) -> None:
-    """Marca somente a situação DÉBITO no formulário.
+def _normalizar_situacao(pagina, situacoes: tuple[str, ...] | None = None) -> None:
+    """Ajusta o filtro de situação do formulário.
 
-    Dívida ativa, ajuizado e quaisquer situações pagas/canceladas são
-    desmarcadas. Quando existe um ``<label>`` associado, ele é clicado para
-    que o PrimeFaces atualize o estado no servidor (não apenas o DOM).
+    Por padrão marca somente DÉBITO (dívida ativa, ajuizado e situações
+    pagas/canceladas ficam de fora). A verificação de cobrabilidade passa
+    ``SITUACOES_VERIFICACAO`` para ver também as situações que encerram a
+    dívida. Quando existe um ``<label>`` associado, ele é clicado para que o
+    PrimeFaces atualize o estado no servidor (não apenas o DOM).
     """
+    # Reaconsulta os checkboxes a cada volta: o PrimeFaces re-renderiza o
+    # painel depois de cada clique e os nós antigos ficam soltos no DOM.
     normalizar = """(ativos) => {
-        const campos = Array.from(
+        const campos = () => Array.from(
             document.querySelectorAll('input[name="situacaoDebito"]')
         );
-        for (const campo of campos) {
-            const deveEstarMarcado = ativos.includes(campo.value);
-            if (campo.checked === deveEstarMarcado) {
-                continue;
+        for (let volta = 0; volta < 3; volta++) {
+            let mudou = false;
+            for (const campo of campos()) {
+                const deveEstarMarcado = ativos.includes(campo.value);
+                if (campo.checked === deveEstarMarcado) {
+                    continue;
+                }
+                const rotulo = campo.id
+                    ? document.querySelector('label[for="' + campo.id + '"]')
+                    : null;
+                if (rotulo) {
+                    rotulo.click();
+                } else {
+                    campo.checked = deveEstarMarcado;
+                    campo.dispatchEvent(new Event('change', { bubbles: true }));
+                }
+                mudou = true;
             }
-            const rotulo = campo.id
-                ? document.querySelector('label[for="' + campo.id + '"]')
-                : null;
-            if (rotulo) {
-                rotulo.click();
-            } else {
-                campo.checked = deveEstarMarcado;
-                campo.dispatchEvent(new Event('change', { bubbles: true }));
-            }
+            if (!mudou) break;
         }
     }"""
     try:
-        pagina.evaluate(normalizar, list(SITUACOES_ATIVAS))
+        pagina.evaluate(
+            normalizar, list(situacoes or SITUACOES_ATIVAS)
+        )
         pagina.wait_for_timeout(300)
     except Exception as exc:  # noqa: BLE001
         raise ConsultaNaoVerificada(
@@ -1258,7 +1363,8 @@ def _digitar_documento(pagina, seletor_documento: str, documento: str) -> None:
 
 
 def _verificar_pesquisa(pagina, documento: str, seletor_documento: str,
-                        tipo_pessoa: str) -> bool | None:
+                        tipo_pessoa: str,
+                        incluir_pagos: bool = False) -> bool | None:
     """Confere documento, tipo e filtros após a pesquisa.
 
     Retorna ``True`` se o documento foi confirmado, ``None`` se não foi
@@ -1293,31 +1399,33 @@ def _verificar_pesquisa(pagina, documento: str, seletor_documento: str,
     except Exception:  # noqa: BLE001
         pass
 
-    try:
-        situacoes = pagina.eval_on_selector_all(
-            'input[name="situacaoDebito"]:checked',
-            "els => els.map(e => e.value).filter(v => v)",
-        )
-        # O PrimeFaces pode restaurar na resposta os filtros antigos da sessão
-        # (DIVIDA_ATIVA / AJUIZADO). Isso não invalida os débitos encontrados.
-        # Só rejeitamos situações claramente pagas/encerradas, que esconderiam
-        # débitos em aberto.
-        indevidas = [
-            situacao for situacao in situacoes
-            if any(
-                situacao.startswith(prefixo)
-                for prefixo in SITUACOES_PAGAS_OU_ENCERRADAS
+    if not incluir_pagos:
+        try:
+            situacoes = pagina.eval_on_selector_all(
+                'input[name="situacaoDebito"]:checked',
+                "els => els.map(e => e.value).filter(v => v)",
             )
-        ]
-        if indevidas:
-            raise ConsultaNaoVerificada(
-                "A pesquisa incluiu situações pagas/encerradas: "
-                + ", ".join(indevidas)
-            )
-    except ConsultaNaoVerificada:
-        raise
-    except Exception:  # noqa: BLE001
-        pass
+            # O PrimeFaces pode restaurar na resposta os filtros antigos da
+            # sessão (DIVIDA_ATIVA / AJUIZADO). Isso não invalida os débitos
+            # encontrados. Só rejeitamos situações claramente pagas/encerradas,
+            # que esconderiam débitos em aberto. Na verificação de
+            # cobrabilidade essas situações são justamente o que queremos ver.
+            indevidas = [
+                situacao for situacao in situacoes
+                if any(
+                    situacao.startswith(prefixo)
+                    for prefixo in SITUACOES_PAGAS_OU_ENCERRADAS
+                )
+            ]
+            if indevidas:
+                raise ConsultaNaoVerificada(
+                    "A pesquisa incluiu situações pagas/encerradas: "
+                    + ", ".join(indevidas)
+                )
+        except ConsultaNaoVerificada:
+            raise
+        except Exception:  # noqa: BLE001
+            pass
 
     return documento_confirmado
 
@@ -1412,12 +1520,13 @@ def consultar_debito(
     cpf: str,
     nome: str = "",
     cookie_value: str = "",
-    timeout: int = 30,
+    timeout: int = 60,
     tipo: str = "",
     cookie_sessao: str = "",
     _tentativa: int = 0,
     deve_parar=None,
     sem_confirmacao: list | None = None,
+    incluir_pagos: bool = False,
 ) -> list[dict]:
     """Consulta um documento (CPF/CNPJ/CIF) no site.
 
@@ -1427,6 +1536,10 @@ def consultar_debito(
 
     Só devolve lista vazia quando a pesquisa foi executada e confirmadamente
     não há débitos. Qualquer dúvida levanta ConsultaNaoVerificada.
+
+    Com ``incluir_pagos=True`` (verificação de cobrabilidade), o filtro do
+    site passa a incluir pagas/canceladas/prescritas e todas as linhas são
+    devolvidas com a situação original.
     """
     import urllib.request
 
@@ -1564,9 +1677,12 @@ def consultar_debito(
                 _aplicar_periodo(pagina)
                 verificar_erro_site()
 
-                # Em "Informações do Débito", manter marcadas somente as
-                # situações de DÉBITO; pagas/canceladas ficam de fora.
-                _normalizar_situacao(pagina)
+                # Em "Informações do Débito": na consulta normal, somente
+                # DÉBITO; na verificação, todas as situações relevantes.
+                if incluir_pagos:
+                    _normalizar_situacao(pagina, SITUACOES_VERIFICACAO)
+                else:
+                    _normalizar_situacao(pagina)
                 verificar_erro_site()
 
                 # Garante que o documento não foi trocado pelos AJAX acima.
@@ -1660,16 +1776,24 @@ def consultar_debito(
             # Confere documento/tipo/filtros. O campo pode estar temporariamente
             # indisponível após o AJAX: nesse caso o retorno é None.
             documento_confirmado = _verificar_pesquisa(
-                pagina, cpf, seletor_documento, tipo_pessoa
+                pagina, cpf, seletor_documento, tipo_pessoa,
+                incluir_pagos=incluir_pagos,
             )
 
             tem_tabela, tem_dados, sem_registros = _estado_resultado(pagina)
 
             if tem_tabela and tem_dados:
-                # Há linhas: a pesquisa obviamente executou com o documento
-                # digitado e conferido antes do clique. Aceita os débitos mesmo
-                # que não tenha sido possível reler o campo depois do AJAX.
-                debitos: list[dict] = _extrair_tabelas(pagina)
+                # NUNCA publicar débitos sem confirmar o documento. Se o
+                # campo não pôde ser relido ( sessão CDP trocada, AJAX ), o
+                # resultado pode ser de OUTRO contribuinte.
+                if documento_confirmado is not True:
+                    raise ConsultaNaoVerificada(
+                        "Não foi possível confirmar o documento após a pesquisa; "
+                        "os débitos exibidos podem ser de outro contribuinte."
+                    )
+                debitos: list[dict] = _extrair_tabelas(
+                    pagina, incluir_pagos=incluir_pagos
+                )
                 for debito in debitos:
                     debito["_pesquisa_por"] = tipo_pesquisa
                 # Linhas existiam, mas nenhuma era DÉBITO (o site pode ter
@@ -1693,7 +1817,7 @@ def consultar_debito(
                 if documento_confirmado is not True:
                     sem_confirmacao.append(True)
                 debitos = []
-            elif _sessao_expirada(pagina):
+            elif _sessao_expirada(pagina, incluir_oculto=True):
                 # Só confiamos na mensagem VISÍVEL: o site mantém um painel
                 # oculto com "sua sessão expirou" até em páginas normais.
                 if _tentativa == 0:
@@ -1705,14 +1829,16 @@ def consultar_debito(
                             novos_cookies["JSESSIONID"], _tentativa=1,
                             deve_parar=deve_parar,
                             sem_confirmacao=sem_confirmacao,
+                            incluir_pagos=incluir_pagos,
                         )
                     except ConsultaInterrompida:
                         raise
                     except Exception:  # noqa: BLE001
                         pass
                 raise ConsultaNaoVerificada(
-                    "Sessão expirada no navegador. Entre no sistema novamente e "
-                    "use a aba Ambiente → Atualizar cookies."
+                    "Sessão expirada no site — os cookies do navegador são "
+                    "renovados automaticamente antes de cada nova tentativa, "
+                    "mas a consulta não pôde ser confirmada."
                 )
             else:
                 # Sem tabela e sem mensagem: pode ter sido apenas lentidão do
@@ -1723,6 +1849,7 @@ def consultar_debito(
                         tipo, cookie_sessao, _tentativa=1,
                         deve_parar=deve_parar,
                         sem_confirmacao=sem_confirmacao,
+                        incluir_pagos=incluir_pagos,
                     )
                 raise ConsultaNaoVerificada(
                     "Após a pesquisa não apareceu tabela de resultados nem mensagem "
@@ -1752,6 +1879,7 @@ def consultar_debito(
                     novos_cookies["JSESSIONID"], _tentativa=1,
                     deve_parar=deve_parar,
                     sem_confirmacao=sem_confirmacao,
+                    incluir_pagos=incluir_pagos,
                 )
             except ConsultaInterrompida:
                 raise
@@ -1768,7 +1896,8 @@ def consultar_debito(
         return _executar_com_playwright(
             consultar_debito, cpf, nome, cookie_value, timeout, tipo,
             cookie_sessao, _tentativa=1, deve_parar=deve_parar,
-            sem_confirmacao=sem_confirmacao
+            sem_confirmacao=sem_confirmacao,
+            incluir_pagos=incluir_pagos,
         )
     return debitos
 
@@ -1785,7 +1914,7 @@ class ConsultaWorker(QThread):
     documento_iniciado = pyqtSignal(str)
     finalizado = pyqtSignal(str)
 
-    def __init__(self, registros: list[dict], cookie: str = "", timeout: int = 30,
+    def __init__(self, registros: list[dict], cookie: str = "", timeout: int = 60,
                  cookie_sessao: str = "", indice_inicial: int = 0,
                  arquivo_progresso: Path | None = None,
                  resultados_iniciais: list[dict] | None = None,
@@ -1793,7 +1922,7 @@ class ConsultaWorker(QThread):
                  sem_navegador: bool = False, entrada: str = "", aba: str = "",
                  variar_pausa: bool = False, controle: dict | None = None,
                  documentos_ignorar: set[str] | None = None,
-                 parent=None):
+                 incluir_pagos: bool = False, parent=None):
         super().__init__(parent)
         self.entrada = entrada
         self.aba = aba
@@ -1805,6 +1934,7 @@ class ConsultaWorker(QThread):
         self.arquivo_progresso = arquivo_progresso
         self.resultados = list(resultados_iniciais or [])
         self.modo_revisao = modo_revisao
+        self.incluir_pagos = incluir_pagos
         self.pausa = max(0.0, float(pausa))
         self.sem_navegador = sem_navegador
         self.variar_pausa = variar_pausa
@@ -1815,6 +1945,7 @@ class ConsultaWorker(QThread):
         # paralela está cuidando deles (evita consultar o mesmo CPF 2x).
         self.documentos_ignorar = documentos_ignorar or set()
         self._parar = False
+        self._falhas_rede = 0
 
     def stop(self) -> None:
         self._parar = True
@@ -1841,7 +1972,12 @@ class ConsultaWorker(QThread):
         self, documento: str, nome: str, competencia: str,
         indice: int, mensagem_erro: str,
     ) -> bool:
-        """Usa o relatório antigo se a consulta ao site não deu certo."""
+        """Mostra débitos do snapshot legado, mas SEM confirmar cobrança.
+
+        O arquivo é um snapshot com data: um débito pago/cancelado depois
+        disso continuaria aparecendo como em aberto. Por isso o status nunca
+        é VERIFICADO e a OBSERVAÇÃO não aceita estas linhas.
+        """
         digitos = "".join(
             caracter for caracter in documento if caracter.isdigit()
         )
@@ -1854,19 +1990,43 @@ class ConsultaWorker(QThread):
                 "Tipo de Débito": debito["tipo_debito"],
                 "Competência": debito["competencia"],
                 "Valor (R$)": f"{debito['valor']:.2f}".replace(".", ","),
-                "Status": "VERIFICADO",
-                "Erro": (
-                    "Débito localizado no relatório antigo (sistema legado). "
-                    f"Site: {mensagem_erro[:90]}"
-                ),
+                "Status": STATUS_PENDENTE,
+                # A origem fica no STATUS e na flag _pendente_confirmacao: a coluna
+                # Erro permanece limpa (não é uma falha de consulta).
+                "Erro": "",
                 "CIF": debito["cif"],
                 "ID Dívida": debito["id_divida"],
                 "Vencimento": debito["vencimento"],
+                "Situação (site)": str(debito.get("situacao", "") or "").strip(),
+                "_pendente_confirmacao": True,
             }
             for debito in antigos
         ]
         self._publicar(documento, novos, indice)
         return True
+
+    def _falha_rede_critica(self, mensagem: str) -> bool:
+        """Para a rodada se o site estiver fora há vários documentos seguidos."""
+        texto = str(mensagem).lower()
+        indicadores = (
+            "connection refused", "err_connection", "address unreachable",
+            "err_address", "err_network", "timeout", "timed out",
+            "não foi possível acessar", "nao foi possivel acessar",
+            "net::",
+        )
+        if not any(indicio in texto for indicio in indicadores):
+            self._falhas_rede = 0
+            return False
+        self._falhas_rede += 1
+        if self._falhas_rede >= 3:
+            self._parar = True
+            self.aviso.emit(
+                "Site inalcançável em 3 documentos seguidos — encerrando para "
+                "não perder tempo. Verifique a conexão e o login no navegador; "
+                "o progresso foi salvo e a consulta pode ser retomada."
+            )
+            return True
+        return False
 
     def run(self) -> None:
         total = len(self.registros)
@@ -1942,14 +2102,15 @@ class ConsultaWorker(QThread):
                             "Tipo de Débito": debito["tipo_debito"],
                             "Competência": debito["competencia"],
                             "Valor (R$)": f"{debito['valor']:.2f}".replace(".", ","),
-                            "Status": "VERIFICADO",
-                            "Erro": (
-                                "Débito localizado no relatório antigo "
-                                "(sistema legado)."
-                            ),
+                            "Status": STATUS_PENDENTE,
+                            "Erro": "",
                             "CIF": debito["cif"],
                             "ID Dívida": debito["id_divida"],
                             "Vencimento": debito["vencimento"],
+                            "Situação (site)": str(
+                                debito.get("situacao", "") or ""
+                            ).strip(),
+                            "_pendente_confirmacao": True,
                         }
                         for debito in antigos
                     ]
@@ -1961,9 +2122,10 @@ class ConsultaWorker(QThread):
                         "Valor (R$)": "0,00",
                         "Status": "DOCUMENTO INVÁLIDO",
                         "Erro": (
-                            "CPF/CNPJ inválido (dígito verificador) e sem débito "
-                            "no relatório antigo — conferir a planilha."
+                            "CPF/CNPJ inválido (dígito verificador) — "
+                            "conferir a planilha."
                         ),
+                        "Situação (site)": "",
                     }]
                 self._publicar(documento, novos, indice_real)
                 if self.arquivo_progresso is not None:
@@ -1995,6 +2157,10 @@ class ConsultaWorker(QThread):
                             documento, nome, self.cookie, self.cookie_sessao,
                             self.timeout, tipo,
                             deve_parar=self.parar_solicitado,
+                            situacoes=(
+                                SITUACOES_VERIFICACAO_ESSENCIAIS
+                                if self.incluir_pagos else None
+                            ),
                         )
                 else:
                     # 404 e a página de erro do site (ex.: código 13429)
@@ -2019,6 +2185,7 @@ class ConsultaWorker(QThread):
                                     tipo, self.cookie_sessao,
                                     deve_parar=self.parar_solicitado,
                                     sem_confirmacao=sem_confirmacao,
+                                    incluir_pagos=self.incluir_pagos,
                                 )
                             if (
                                 debitos
@@ -2051,10 +2218,18 @@ class ConsultaWorker(QThread):
                                 raise
                             if self._parar:
                                 raise ConsultaInterrompida() from exc
+                            if (
+                                "sessão expirada" in mensagem
+                                or "sessao expirada" in mensagem
+                            ):
+                                resumo = (
+                                    "sessão expirada — renovando cookies do "
+                                    "navegador e refazendo a consulta"
+                                )
+                            else:
+                                resumo = str(exc)
                             self.aviso.emit(
-                                f"{documento}: {exc} — abrindo sessão nova no "
-                                f"Brave e refazendo a consulta "
-                                f"({tentativa + 2}/3)."
+                                f"{documento}: {resumo} ({tentativa + 2}/3)."
                             )
                             self.progresso.emit(
                                 max(0, int((indice - 1) * 100 / total)),
@@ -2063,19 +2238,33 @@ class ConsultaWorker(QThread):
                             )
                             self.msleep(1000)
                 if not debitos:
+                    # HTTP é experimental e, no Playwright, uma resposta sem
+                    # confirmação do documento NÃO pode virar "sem débitos"
+                    # confirmado. Nesses casos o item volta para o Revisar.
+                    nao_confirmado = bool(sem_confirmacao) or self.sem_navegador
                     descricao = (
-                        "Sem débitos (NÃO CONFIRMADO)" if sem_confirmacao
-                        else "Sem débitos"
+                        "Não foi possível verificar débitos" if nao_confirmado
+                        else "Sem débitos verificados"
                     )
                     novos = [{
                         "Nome": nome, "CPF": documento,
                         "Tipo de Débito": descricao, "Competência": competencia_original or "-",
-                        "Valor (R$)": "0,00", "Status": "VERIFICADO", "Erro": "",
+                        "Valor (R$)": "0,00",
+                        "Status": STATUS_PENDENTE if nao_confirmado else "VERIFICADO",
+                        "Erro": (
+                            "Resultado sem confirmação suficiente — usar Revisar."
+                            if nao_confirmado else ""
+                        ),
                         "CIF": "-", "ID Dívida": "-", "Vencimento": "-",
+                        "Situação (site)": (
+                            "SEM REGISTROS" if not nao_confirmado else ""
+                        ),
                     }]
                 else:
-                    novos = [
-                        {
+                    novos = []
+                    descartados = 0
+                    for debito in debitos:
+                        item = {
                             "Nome": nome, "CPF": documento,
                             "Tipo de Débito": _tipo_debito_com_migracao(
                                 debito["tipo_debito"], registro
@@ -2089,11 +2278,33 @@ class ConsultaWorker(QThread):
                             "CIF": debito.get("cif", ""),
                             "ID Dívida": debito.get("id_divida", ""),
                             "Vencimento": debito.get("vencimento", ""),
+                            "Situação (site)": str(
+                                debito.get("situacao", "") or ""
+                            ).strip(),
                         }
-                        for debito in debitos
-                    ]
+                        if self.incluir_pagos:
+                            # Consulta com TODAS as situações: classifica cada
+                            # linha e mantém somente as dívidas em aberto.
+                            # PAGO, PAGO MANUAL, canceladas etc. ficam fora da
+                            # cobrança mesmo tendo aparecido no site.
+                            pago, cobravel = classificar_situacao(
+                                debito.get("situacao", ""),
+                                float(debito.get("pago", 0) or 0),
+                                float(debito.get("valor", 0) or 0),
+                            )
+                            item["PAGO?"], item["COBRÁVEL?"] = pago, cobravel
+                            if cobravel != "SIM":
+                                descartados += 1
+                                continue
+                        novos.append(item)
+                    if descartados:
+                        self.aviso.emit(
+                            f"{documento}: {descartados} débito(s) pago(s) ou "
+                            "encerrado(s) não entram na cobrança."
+                        )
                 self._publicar(documento, novos, indice_real)
                 ok += 1
+                self._falhas_rede = 0
             except ConsultaInterrompida:
                 # O usuário clicou em Parar no meio da consulta: não publica
                 # resultado para este item e encerra o loop imediatamente.
@@ -2107,9 +2318,12 @@ class ConsultaWorker(QThread):
                         "Nome": nome, "CPF": documento,
                         "Tipo de Débito": "-",
                         "Competência": competencia_original or "-",
-                        "Valor (R$)": "0,00", "Status": "NAO VERIFICADO",
-                        "Erro": str(exc),
+                        "Valor (R$)": "0,00", "Status": STATUS_PENDENTE,
+                        "Erro": mensagem_amigavel_erro(exc),
+                        "Situação (site)": "",
                     }], indice_real)
+                if self._falha_rede_critica(str(exc)):
+                    break
             except Exception as exc:  # noqa: BLE001
                 if not self._publicar_fallback_antigo(
                     documento, nome, competencia_original, indice_real, str(exc)
@@ -2119,8 +2333,12 @@ class ConsultaWorker(QThread):
                         "Nome": nome, "CPF": documento,
                         "Tipo de Débito": "-",
                         "Competência": competencia_original or "-",
-                        "Valor (R$)": "0,00", "Status": "ERRO", "Erro": str(exc),
+                        "Valor (R$)": "0,00", "Status": STATUS_PENDENTE,
+                        "Erro": mensagem_amigavel_erro(exc),
+                        "Situação (site)": "",
                     }], indice_real)
+                if self._falha_rede_critica(str(exc)):
+                    break
 
             processados = indice_real
             if self.arquivo_progresso is not None:
@@ -2580,10 +2798,16 @@ class MainWindow(QMainWindow):
         self._revisao_paralela_ativa = False
         self._documentos_em_revisao: set[str] = set()
         self.worker: ConsultaWorker | None = None
+        self.worker_pagos: VerificarPagosWorker | None = None
+        self.worker_cifs: VerificarCifsWorker | None = None
+        self._fluxo_completo = False
         self._salvador_saidas: SalvarSaidasWorker | None = None
         self._salvamento_pendente = False
         self.config_worker: QThread | None = None
         self._config = QSettings("ConsultaDebitos", "ConsultaDebitos")
+        self.gerar_umalinha = bool(
+            self._config.value("gerar_umalinha", True)
+        )
 
         self._montar_interface()
         self.setStatusBar(QStatusBar(self))
@@ -2710,10 +2934,14 @@ class MainWindow(QMainWindow):
 
     def _atualizar_botao_revisar(self) -> None:
         """Habilita Revisar assim que houver planilha ou resultados carregados."""
+        self._atualizar_painel_resultados()
         if not hasattr(self, "botao_revisar"):
             return
         rodando = (
             (self.worker is not None and self.worker.isRunning())
+            or (self.worker_revisao is not None and self.worker_revisao.isRunning())
+            or (self.worker_pagos is not None and self.worker_pagos.isRunning())
+            or (self.worker_cifs is not None and self.worker_cifs.isRunning())
             or self._revisao_paralela_ativa
         )
         habilitado = not rodando and (
@@ -2722,6 +2950,301 @@ class MainWindow(QMainWindow):
         self.botao_revisar.setEnabled(habilitado)
         if hasattr(self, "botao_revisao_completa"):
             self.botao_revisao_completa.setEnabled(habilitado)
+        self._atualizar_botao_pagos()
+
+    def _atualizar_botao_pagos(self) -> None:
+        """Habilita 'Verificar pagos' somente com planilha e sem consulta ativa."""
+        botao = getattr(self, "botao_verificar_pagos", None)
+        if botao is None:
+            return
+        rodando = (
+            (self.worker is not None and self.worker.isRunning())
+            or (self.worker_revisao is not None and self.worker_revisao.isRunning())
+            or (self.worker_pagos is not None and self.worker_pagos.isRunning())
+            or (self.worker_cifs is not None and self.worker_cifs.isRunning())
+            or self._revisao_paralela_ativa
+        )
+        habilitado = not rodando and bool(self.caminho_entrada)
+        botao.setEnabled(habilitado)
+        botao_completo = getattr(self, "botao_consulta_completa", None)
+        if botao_completo is not None:
+            botao_completo.setEnabled(habilitado)
+        botao_cifs = getattr(self, "botao_verificar_cifs", None)
+        if botao_cifs is not None:
+            botao_cifs.setEnabled(habilitado)
+
+    def consulta_completa(self) -> None:
+        """Revisão completa + classificação de pagos + validação de CIFs."""
+        if self.worker is not None and self.worker.isRunning():
+            return
+        if self.worker_pagos is not None and self.worker_pagos.isRunning():
+            return
+        if self.worker_cifs is not None and self.worker_cifs.isRunning():
+            return
+        if not self._pergunta_sim_nao(
+            "Consulta completa",
+            "Vai executar em sequência:\n"
+            "1) revisão completa de todos os documentos da aba,\n"
+            "2) classificação de pagos,\n"
+            "3) validação dos CIFs.\n\n"
+            "Pode demorar. Deseja continuar?",
+        ):
+            return
+        self._fluxo_completo = True
+        self._log("Consulta completa iniciada (etapa 1/3: revisão completa).")
+        self.revisao_completa()
+
+    def verificar_pagos(self, auto: bool = False) -> None:
+        """Cruza os débitos da OBSERVAÇÃO com o site para achar os cobráveis."""
+        if self.worker_pagos is not None and self.worker_pagos.isRunning():
+            return
+        if self.worker is not None and self.worker.isRunning():
+            QMessageBox.information(
+                self, "Verificar pagos",
+                "Aguarde a consulta em andamento terminar antes de verificar.",
+            )
+            return
+
+        # A OBSERVAÇÃO já preenchida fica no relatório de 1 linha; se ele não
+        # existir, usa a planilha de entrada carregada.
+        origem = (
+            self._arquivo_destino_observacao()
+            if self._usa_observacao()
+            else (self.caminho_entrada or PLANILHA_BASE)
+        )
+        if not Path(origem).exists():
+            origem = self.caminho_entrada or PLANILHA_BASE
+        aba = (
+            self.combo_aba.currentText()
+            if self.combo_aba is not None and self.combo_aba.isEnabled()
+            else ""
+        )
+        try:
+            # Os resultados já obtidos (inclusive os débitos do snapshot
+            # legado) entram no módulo novo para análise/classificação.
+            registros = registros_para_analise(self.resultados)
+            observacao = registros_com_observacao(origem, aba or None)
+        except Exception as exc:  # noqa: BLE001
+            QMessageBox.critical(
+                self, "Verificar pagos",
+                f"Não foi possível ler os débitos para análise:\n{exc}",
+            )
+            return
+        # Junta o que veio dos resultados com o que está na OBSERVAÇÃO, sem
+        # duplicar tipo+competência do mesmo documento.
+        por_documento = {r["Documento"]: r for r in registros}
+        for registro_obs in observacao:
+            documento = registro_obs["Documento"]
+            if documento not in por_documento:
+                por_documento[documento] = registro_obs
+                continue
+            destino = por_documento[documento]
+            chaves = {
+                (chave_tipo(d["tipo"]), chave_competencia(d["competencia"]))
+                for d in destino["Debitos"]
+            }
+            for debito in registro_obs["Debitos"]:
+                chave = (
+                    chave_tipo(debito["tipo"]),
+                    chave_competencia(debito["competencia"]),
+                )
+                if chave not in chaves:
+                    chaves.add(chave)
+                    destino["Debitos"].append(debito)
+        registros = list(por_documento.values())
+        if not registros:
+            QMessageBox.information(
+                self, "Verificar pagos",
+                "Nenhum débito encontrado nos resultados nem na coluna "
+                "OBSERVAÇÃO (débitos) desta aba. Execute a consulta primeiro.",
+            )
+            return
+
+        total_debitos = sum(len(r.get("Debitos", [])) for r in registros)
+        if not auto and not self._pergunta_sim_nao(
+            "Verificar pagos",
+            f"Vamos cruzar {total_debitos} débito(s) de {len(registros)} "
+            f"documento(s) da aba '{aba or 'todas'}' com o site.\n\n"
+            "O site será consultado com todos os filtros de situação. "
+            "Deseja continuar?",
+        ):
+            return
+
+        destino, detalhe = caminhos_saida(
+            self.caminho_entrada, _pasta_relatorios(), PLANILHA_BASE.stem
+        )
+        self._carregar_cookie_brave(silent=True)
+        self.barra_progresso.setValue(0)
+        self.label_status.setText("Verificando pagos...")
+        self.botao_executar.setEnabled(False)
+        self.botao_parar.setEnabled(True)
+        self.botao_parar_resultados.setEnabled(True)
+        self.botao_escolher.setEnabled(False)
+        self.botao_salvar.setEnabled(False)
+        self.botao_revisar.setEnabled(False)
+        if hasattr(self, "botao_revisao_completa"):
+            self.botao_revisao_completa.setEnabled(False)
+        self.botao_verificar_pagos.setEnabled(False)
+        self.botao_verificar_cifs.setEnabled(False)
+
+        self.worker_pagos = VerificarPagosWorker(
+            registros,
+            consultar_debito,
+            self.campo_cookie.text(),
+            self.cookie_sessao,
+            destino=destino,
+            detalhe=detalhe,
+            origem=origem,
+            pausa=self.campo_velocidade.value(),
+            variar_pausa=self.campo_variar_pausa.isChecked(),
+            controle=self.controle_consulta,
+            parent=self,
+        )
+        self.worker_pagos.progresso.connect(self._ao_progresso)
+        self.worker_pagos.aviso.connect(self._log)
+        self.worker_pagos.documento_concluido.connect(self._ao_documento_pago)
+        self.worker_pagos.finalizado.connect(self._ao_finalizar_pagos)
+        self.worker_pagos.finished.connect(self._limpar_worker_pagos)
+        self.worker_pagos.start()
+        self._log(
+            f"Verificação de cobrabilidade iniciada: {total_debitos} débito(s) "
+            f"de {len(registros)} documento(s) da aba '{aba or 'todas'}'."
+        )
+
+    def _ao_documento_pago(self, informacao: dict) -> None:
+        itens = informacao.get("Itens", [])
+        cobraveis = sum(
+            1 for item in itens if item.get("COBRÁVEL?") == "SIM"
+        )
+        self._log(
+            f"{informacao.get('Documento', '')}: {len(itens)} débito(s) "
+            f"cruzado(s), {cobraveis} cobrável(is)."
+        )
+
+    def _ao_finalizar_pagos(self, mensagem: str) -> None:
+        self._resetar_aviso_esc()
+        if self._fluxo_completo:
+            self._fluxo_completo = False
+            if "Concluído" in mensagem:
+                self._log("Consulta completa (3/3): validando CIFs...")
+                QTimer.singleShot(50, lambda: self.verificar_cifs(auto=True))
+        self._log(mensagem)
+        self.label_status.setText(
+            "Concluído" if "Concluído" in mensagem else mensagem
+        )
+        self.botao_executar.setEnabled(True)
+        self.botao_parar.setEnabled(False)
+        self.botao_parar_resultados.setEnabled(False)
+        self.botao_escolher.setEnabled(True)
+        self.botao_salvar.setEnabled(bool(self.resultados))
+        self.barra_progresso.setValue(100)
+        self.statusBar().showMessage(mensagem)
+
+    def _limpar_worker_pagos(self) -> None:
+        self.worker_pagos = None
+        self._atualizar_botao_revisar()
+
+    def _arquivo_resultado_classico(self) -> Path:
+        """Planilha com um débito por linha, onde ficam os CIFs."""
+        stem = self.caminho_entrada.stem if self.caminho_entrada else PLANILHA_BASE.stem
+        return _pasta_relatorios() / f"{stem}_resultado.xlsx"
+
+    def verificar_cifs(self, auto: bool = False) -> None:
+        """Consulta o Cadastro Imobiliário (CPF/CNPJ) e valida os CIFs."""
+        if self.worker_cifs is not None and self.worker_cifs.isRunning():
+            return
+        if self.worker is not None and self.worker.isRunning():
+            QMessageBox.information(
+                self, "Verificar CIFs",
+                "Aguarde a consulta em andamento terminar antes de verificar.",
+            )
+            return
+
+        try:
+            documentos = carregar_cifs(
+                self.resultados, self._arquivo_resultado_classico()
+            )
+        except Exception as exc:  # noqa: BLE001
+            QMessageBox.critical(
+                self, "Verificar CIFs",
+                f"Não foi possível ler os CIFs dos resultados:\n{exc}",
+            )
+            return
+        if not documentos:
+            QMessageBox.information(
+                self, "Verificar CIFs",
+                "Nenhum CIF foi encontrado nos débitos consultados. "
+                "Execute a consulta primeiro.",
+            )
+            return
+
+        total_cifs = sum(len(cifs) for cifs in documentos.values())
+        if not auto and not self._pergunta_sim_nao(
+            "Verificar CIFs",
+            f"Vamos consultar o Cadastro Imobiliário do IPTU para "
+            f"{len(documentos)} CPF(s)/CNPJ(s) e verificar {total_cifs} CIF(s).\n\n"
+            "Um CIF só será considerado REAL se aparecer no cadastro com "
+            "endereço. Deseja continuar?",
+        ):
+            return
+
+        destino, detalhe = caminhos_saida_cifs(
+            self.caminho_entrada, _pasta_relatorios(), PLANILHA_BASE.stem
+        )
+        self._carregar_cookie_brave(silent=True)
+        self.barra_progresso.setValue(0)
+        self.label_status.setText("Verificando CIFs...")
+        self.botao_executar.setEnabled(False)
+        self.botao_parar.setEnabled(True)
+        self.botao_parar_resultados.setEnabled(True)
+        self.botao_escolher.setEnabled(False)
+        self.botao_salvar.setEnabled(False)
+        self.botao_revisar.setEnabled(False)
+        if hasattr(self, "botao_revisao_completa"):
+            self.botao_revisao_completa.setEnabled(False)
+        self.botao_verificar_pagos.setEnabled(False)
+        self.botao_verificar_cifs.setEnabled(False)
+
+        self.worker_cifs = VerificarCifsWorker(
+            documentos,
+            consultar_imoveis,
+            self.campo_cookie.text(),
+            self.cookie_sessao,
+            destino=destino,
+            detalhe=detalhe,
+            origem=self._arquivo_resultado_classico(),
+            pausa=self.campo_velocidade.value(),
+            variar_pausa=self.campo_variar_pausa.isChecked(),
+            controle=self.controle_consulta,
+            parent=self,
+        )
+        self.worker_cifs.progresso.connect(self._ao_progresso)
+        self.worker_cifs.aviso.connect(self._log)
+        self.worker_cifs.finalizado.connect(self._ao_finalizar_cifs)
+        self.worker_cifs.finished.connect(self._limpar_worker_cifs)
+        self.worker_cifs.start()
+        self._log(
+            f"Verificação de CIFs iniciada: {total_cifs} CIF(s) de "
+            f"{len(documentos)} documento(s)."
+        )
+
+    def _ao_finalizar_cifs(self, mensagem: str) -> None:
+        self._resetar_aviso_esc()
+        self._log(mensagem)
+        self.label_status.setText(
+            "Concluído" if "Concluído" in mensagem else mensagem
+        )
+        self.botao_executar.setEnabled(True)
+        self.botao_parar.setEnabled(False)
+        self.botao_parar_resultados.setEnabled(False)
+        self.botao_escolher.setEnabled(True)
+        self.botao_salvar.setEnabled(bool(self.resultados))
+        self.barra_progresso.setValue(100)
+        self.statusBar().showMessage(mensagem)
+
+    def _limpar_worker_cifs(self) -> None:
+        self.worker_cifs = None
+        self._atualizar_botao_revisar()
 
     def _carregar_resultados_salvos(self) -> None:
         """Mostra os resultados já gravados ao reabrir a planilha."""
@@ -2737,6 +3260,24 @@ class MainWindow(QMainWindow):
         resultados = list(progresso.get("resultados") or [])
         if not resultados:
             return
+        # Progressos antigos guardavam débitos do snapshot com texto de
+        # "relatório antigo/sistema legado" na coluna Erro. Isso não é uma
+        # falha de consulta: limpa o Erro e mantém o status de não confirmado
+        # (a origem fica na flag _pendente_confirmacao, usada pelo módulo novo).
+        for item in resultados:
+            erro = str(item.get("Erro", "") or "").lower()
+            item["Erro"] = mensagem_amigavel_erro(item.get("Erro", ""))
+            status_antigo = str(item.get("Status", "") or "").strip().upper()
+            if (
+                "relatório antigo" in erro or "sistema legado" in erro
+                or status_antigo in (
+                    "SEM CONFIRMAÇÃO / PENDENTE DE ANÁLISE",
+                    "LEGADO_NAO_CONFIRMADO",
+                )
+            ):
+                item["Status"] = STATUS_PENDENTE
+                item["Erro"] = ""
+                item["_pendente_confirmacao"] = True
         # Repara índices de progressos antigos: cada CPF volta para a posição
         # real que ocupa na planilha de entrada.
         posicoes: dict[str, int] = {}
@@ -2776,6 +3317,73 @@ class MainWindow(QMainWindow):
         self.botao_tema.clicked.connect(self._alternar_tema)
         self.abas.setCornerWidget(self.botao_tema, Qt.Corner.TopRightCorner)
         self._atualizar_botao_tema()
+
+        # --- Aba Classificação e Verificação (primeira, no topo) ---
+        aba_modulos = QWidget()
+        modulos_layout = QVBoxLayout(aba_modulos)
+        modulos_layout.addWidget(QLabel(
+            "Classificação e verificação: cruze os débitos com o site e confira "
+            "os CIFs. Selecione a aba desejada em Consulta antes de executar."
+        ))
+        legenda = QLabel(
+            "<b>Legenda de alerta:</b> "
+            "<span style='color:#1B5E20;'>■ VERDE — cobrável (confirmado)</span> &nbsp; "
+            "<span style='color:#B26A00;'>■ LARANJA — indeterminado (analisar)</span> &nbsp; "
+            "<span style='color:#9C6500;'>■ AMARELO — pendente de análise</span> &nbsp; "
+            "<span style='color:#9C0006;'>■ VERMELHO — não cobrar (pago/cancelado/prescrito)</span>"
+        )
+        legenda.setWordWrap(True)
+        modulos_layout.addWidget(legenda)
+
+        acoes = QGroupBox("Ações")
+        acoes_layout = QVBoxLayout(acoes)
+        self.botao_consulta_completa = QPushButton("Consulta completa")
+        self.botao_consulta_completa.setEnabled(False)
+        self.botao_consulta_completa.setToolTip(
+            "Executa em sequência: revisão completa (todas as situações), "
+            "classificação de pagos e validação dos CIFs."
+        )
+        self.botao_consulta_completa.clicked.connect(self.consulta_completa)
+        acoes_layout.addWidget(self.botao_consulta_completa)
+
+        self.botao_verificar_pagos = QPushButton("Verificar pagos")
+        self.botao_verificar_pagos.setEnabled(False)
+        self.botao_verificar_pagos.setToolTip(
+            "Cruza os débitos com o site e marca PAGO? e COBRÁVEL? "
+            "(SIM / NÃO / NÃO CONFIRMADO) para cada dívida."
+        )
+        self.botao_verificar_pagos.clicked.connect(self.verificar_pagos)
+        acoes_layout.addWidget(self.botao_verificar_pagos)
+
+        self.botao_verificar_cifs = QPushButton("Verificar CIFs")
+        self.botao_verificar_cifs.setEnabled(False)
+        self.botao_verificar_cifs.setToolTip(
+            "Consulta o Cadastro Imobiliário pelo CPF/CNPJ e marca CIF REAL? "
+            "e ENDEREÇO (CIF) para cada imóvel."
+        )
+        self.botao_verificar_cifs.clicked.connect(self.verificar_cifs)
+        acoes_layout.addWidget(self.botao_verificar_cifs)
+
+        self.botao_umalinha = QPushButton()
+        self.botao_umalinha.clicked.connect(self._alternar_gerar_umalinha)
+        acoes_layout.addWidget(self.botao_umalinha)
+
+        acoes.setMaximumWidth(560)
+        modulos_layout.addWidget(acoes)
+
+        instrucoes = QLabel(
+            "Como usar:\n"
+            "1. Na aba Consulta, escolha a planilha e a aba dos contribuintes.\n"
+            "2. Clique em Consulta completa para revisar, classificar pagos e "
+            "validar CIFs em sequência — ou use um botão individual.\n"
+            "3. O resultado aparece na aba Resultados e os relatórios são "
+            "gravados em relatorios/.\n\n"
+            "Dica: mantenha o sistema aberto e logado no navegador com "
+            "depuração (porta 9222) para maior estabilidade."
+        )
+        instrucoes.setWordWrap(True)
+        modulos_layout.addWidget(instrucoes)
+        modulos_layout.addStretch()
 
         # --- Aba Consulta ---
         # Com todos os controles (pausa, revisão paralela etc.), a aba pode
@@ -2827,20 +3435,22 @@ class MainWindow(QMainWindow):
         self.tabela_entrada = QTableWidget()
         # Mostra no máximo ~9 linhas; o restante fica acessível pela barra
         # vertical que sempre aparece.
-        self.tabela_entrada.setMinimumHeight(320)
-        self.tabela_entrada.setMaximumHeight(340)
+        self.tabela_entrada.setMinimumHeight(200)
+        self.tabela_entrada.setMaximumHeight(240)
         _configurar_tabela(
             self.tabela_entrada, ["Coluna"], zebra=True, scroll_sempre=True
         )
         entrada_layout.addWidget(self.tabela_entrada)
         consulta_layout.addWidget(grupo_entrada)
 
-        grupo_sessao = QGroupBox("Sessão (opcional)")
+        grupo_sessao = QGroupBox("Sessão (leitura automática do navegador)")
         sessao_layout = QHBoxLayout(grupo_sessao)
         sessao_layout.addWidget(QLabel(f"Cookie ({COOKIE_NAME}):"))
         self.campo_cookie = QLineEdit()
         self.campo_cookie.setPlaceholderText("Cookie preenchido automaticamente do navegador")
         sessao_layout.addWidget(self.campo_cookie)
+        self.campo_cookie.setEchoMode(QLineEdit.EchoMode.Password)
+        self.campo_cookie.setToolTip("Token de sessão lido do navegador. Fica oculto por segurança.")
         self.botao_cookie_brave = QPushButton("Buscar no navegador")
         self.botao_cookie_brave.clicked.connect(self._carregar_cookie_brave)
         sessao_layout.addWidget(self.botao_cookie_brave)
@@ -2876,16 +3486,17 @@ class MainWindow(QMainWindow):
         self.label_dica_espaco.setObjectName("dicaEspaco")
         execucao_layout.addWidget(self.label_dica_espaco)
 
-        #Alterna entre consulta com navegador (Playwright) e HTTP direto.
+        # O site é JSF/PrimeFaces: sem JavaScript não é possível nem ler o
+        # formulário. A opção fica visível apenas como explicação.
         self.campo_sem_navegador = QCheckBox(
-            "Tentar SEM navegador (HTTP direto)"
+            "SEM navegador (indisponível — o site exige JavaScript)"
         )
+        self.campo_sem_navegador.setChecked(False)
+        self.campo_sem_navegador.setEnabled(False)
         self.campo_sem_navegador.setToolTip(
-            "Marcado: envia o formulário por HTTP, sem abrir navegador "
-            "(modo experimental).\n"
-            "Desmarcado: usa Playwright — modo padrão e mais confiável.\n"
-            "Se a resposta não puder ser confirmada, o item fica como "
-            "NAO VERIFICADO, nunca 'sem débitos'."
+            "O sistema do ISS Digital usa JavaScript e não pode ser consultado "
+            "por HTTP puro. A consulta sempre usa o navegador automático "
+            "(Playwright) ou a sessão real do Chrome/Brave."
         )
         execucao_layout.addWidget(self.campo_sem_navegador)
 
@@ -2960,12 +3571,30 @@ class MainWindow(QMainWindow):
         # --- Aba Resultados ---
         aba_resultados = QWidget()
         resultados_layout = QVBoxLayout(aba_resultados)
+
+        painel = QGroupBox("Resumo por situação")
+        painel_layout = QHBoxLayout(painel)
+        self.labels_painel: dict[str, QLabel] = {}
+        for chave, titulo in (
+            ("TOTAL", "Total"),
+            ("VERIFICADO", "VERIFICADO"),
+            (STATUS_PENDENTE, "CLASSIFICADO — INDETERMINADO"),
+            ("DOCUMENTO INVÁLIDO", "DOCUMENTO INVÁLIDO"),
+            ("NAO VERIFICADO", "NAO VERIFICADO"),
+            ("ERRO", "ERRO"),
+        ):
+            rotulo = QLabel(f"{titulo}: 0")
+            rotulo.setWordWrap(True)
+            self.labels_painel[chave] = rotulo
+            painel_layout.addWidget(rotulo)
+        resultados_layout.addWidget(painel)
+
         self.tabela_resultados = QTableWidget()
         self.tabela_resultados.setMinimumHeight(220)
         _configurar_tabela(
             self.tabela_resultados,
             COLUNAS_SAIDA,
-            larguras=[185, 150, 225, 105, 120, 215, 90, 100, 100, None],
+            larguras=[185, 150, 225, 105, 120, 270, 90, 100, 100, 165, None],
             scroll_sempre=True,
         )
         self.tabela_resultados.setItemDelegate(
@@ -3002,6 +3631,9 @@ class MainWindow(QMainWindow):
         linha_resultados.addWidget(self.botao_parar_resultados)
         resultados_layout.addLayout(linha_resultados)
         abas.addTab(aba_resultados, "Resultados")
+
+        # 3ª etapa: classificação/verificação fica depois de Consulta e Resultados.
+        abas.addTab(aba_modulos, "Classificação e Verificação")
 
         # --- Aba Log ---
         aba_log = QWidget()
@@ -3068,6 +3700,8 @@ class MainWindow(QMainWindow):
         abas.addTab(self.aba_ambiente, "Ambiente")
         abas.currentChanged.connect(self._ao_mudar_aba_principal)
 
+        self._atualizar_botao_umalinha()
+
         # Tenta carregar automaticamente os cookies da sessão aberta no Brave.
         self.cookie_sessao = ""
         self._carregar_cookie_brave(silent=True)
@@ -3129,6 +3763,48 @@ class MainWindow(QMainWindow):
         if hasattr(self, "controle_consulta"):
             self.controle_consulta["pausa"] = pausa
             self.controle_consulta["variar"] = variar
+
+    def _atualizar_botao_umalinha(self) -> None:
+        botao = getattr(self, "botao_umalinha", None)
+        if botao is None:
+            return
+        if self.gerar_umalinha:
+            botao.setText("1 linha: ATIVADA")
+            botao.setToolTip(
+                "Clique para DESATIVAR: o resultado passa a ser gravado como "
+                "uma linha por débito, sem mexer na coluna OBSERVAÇÃO."
+            )
+            botao.setStyleSheet(
+                "QPushButton { background-color: #1B5E20; color: white; "
+                "font-weight: bold; }"
+            )
+        else:
+            botao.setText("1 linha: DESATIVADA")
+            botao.setToolTip(
+                "Clique para ATIVAR: todos os débitos voltam a ser gravados "
+                "em uma única linha na coluna OBSERVAÇÃO."
+            )
+            botao.setStyleSheet(
+                "QPushButton { background-color: #555555; color: white; "
+                "font-weight: bold; }"
+            )
+
+    def _alternar_gerar_umalinha(self) -> None:
+        self.gerar_umalinha = not self.gerar_umalinha
+        self._config.setValue("gerar_umalinha", self.gerar_umalinha)
+        self._atualizar_botao_umalinha()
+        estado = "ativada" if self.gerar_umalinha else "desativada"
+        self._log(f"Geração em 1 linha (OBSERVAÇÃO) {estado}.")
+        self.statusBar().showMessage(f"Saída em 1 linha {estado}.")
+
+    def _usa_observacao(self) -> bool:
+        """Usa a OBSERVAÇÃO somente se o botão estiver ativado e a aba tiver a coluna."""
+        return bool(
+            self.gerar_umalinha
+            and self.caminho_entrada
+            and self.caminho_entrada.suffix.lower() in (".xlsx", ".xlsm")
+            and tem_coluna_observacao(self.caminho_entrada)
+        )
 
     @staticmethod
     def _pergunta_sim_nao(titulo: str, texto: str,
@@ -3205,7 +3881,7 @@ class MainWindow(QMainWindow):
         # Tabela de resultados: reaplica as cores de cada linha.
         _configurar_tabela(
             self.tabela_resultados, COLUNAS_SAIDA,
-            larguras=[185, 150, 225, 105, 120, 215, 90, 100, 100, None],
+            larguras=[185, 150, 225, 105, 120, 270, 90, 100, 100, 165, None],
             scroll_sempre=True,
         )
         for posicao, item in enumerate(self.resultados):
@@ -3391,6 +4067,7 @@ class MainWindow(QMainWindow):
         arquivos = [
             _arquivo_progresso(self.caminho_entrada, aba),
             _arquivo_progresso_revisao(self.caminho_entrada, aba),
+            _arquivo_progresso_revisao_completa(self.caminho_entrada, aba),
         ]
         try:
             for arquivo in arquivos:
@@ -3401,6 +4078,7 @@ class MainWindow(QMainWindow):
             return
         self.resultados = []
         self.tabela_resultados.setRowCount(0)
+        self._atualizar_painel_resultados()
         self._log("Progresso limpo — a próxima execução começa do zero.")
         self.statusBar().showMessage("Progresso limpo.")
 
@@ -3735,6 +4413,8 @@ class MainWindow(QMainWindow):
         self.worker.finalizado.connect(self._ao_finalizar)
         self.worker.finished.connect(self._limpar_worker)
         self.worker.start()
+        self._atualizar_botao_pagos()
+        self._avisar_se_http()
         if indice_inicial:
             self._log(
                 f"Retomando consulta do registro {indice_inicial + 1} "
@@ -3748,6 +4428,7 @@ class MainWindow(QMainWindow):
 
     def parar(self) -> None:
         self._resetar_aviso_esc()
+        self._fluxo_completo = False
         self._consulta_interrompida = True
         if self.worker_revisao is not None and self.worker_revisao.isRunning():
             self.worker_revisao.stop()
@@ -3756,8 +4437,17 @@ class MainWindow(QMainWindow):
             self.worker.stop()
             self.label_status.setText("Parando após o item atual...")
             self._log("Parada solicitada pelo usuário.")
+        if self.worker_pagos is not None and self.worker_pagos.isRunning():
+            self.worker_pagos.stop()
+            self.label_status.setText("Parando após o documento atual...")
+            self._log("Parada solicitada na verificação de pagos.")
+        if self.worker_cifs is not None and self.worker_cifs.isRunning():
+            self.worker_cifs.stop()
+            self.label_status.setText("Parando após o documento atual...")
+            self._log("Parada solicitada na verificação de CIFs.")
 
     def _ao_progresso(self, percentual: int, mensagem: str) -> None:
+        self._atualizar_painel_resultados()
         self.barra_progresso.setValue(percentual)
         self.label_status.setText(mensagem)
         self.statusBar().showMessage(mensagem)
@@ -3795,8 +4485,11 @@ class MainWindow(QMainWindow):
         self.tabela_resultados.insertRow(posicao)
         self.tabela_resultados.setRowHeight(posicao, 30)
         for coluna, nome in enumerate(COLUNAS_SAIDA):
+            valor = str(item.get(nome, ""))
+            if nome == "Valor (R$)":
+                valor = f"R$ {_para_numero(valor):.2f}".replace(".", ",")
             self.tabela_resultados.setItem(
-                posicao, coluna, QTableWidgetItem(str(item.get(nome, "")))
+                posicao, coluna, QTableWidgetItem(valor)
             )
         self._aplicar_estilo_linha_resultado(posicao, item)
 
@@ -3828,7 +4521,7 @@ class MainWindow(QMainWindow):
             return p["texto_erro"]
         if status == "NAO VERIFICADO":
             return p["texto_atencao"]
-        if status == "DOCUMENTO INVÁLIDO":
+        if status in ("DOCUMENTO INVÁLIDO", STATUS_PENDENTE):
             return p["texto_neutro"]
         if _tem_debitos(item):
             return p["texto_ok"]
@@ -3862,6 +4555,49 @@ class MainWindow(QMainWindow):
                     Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter
                 )
 
+    def _avisar_se_http(self) -> None:
+        """Alerta quando o modo HTTP experimental está ativado."""
+        campo = getattr(self, "campo_sem_navegador", None)
+        if campo is None or not campo.isChecked():
+            return
+        aviso = (
+            "AVISO: 'Tentar SEM navegador (HTTP direto)' está ATIVADO. "
+            "O site exige JavaScript; nesse modo as consultas ficam "
+            "NAO VERIFICADO. Desmarque essa opção na aba Consulta."
+        )
+        self._log(aviso)
+        self.statusBar().showMessage(aviso)
+
+    def _atualizar_painel_resultados(self) -> None:
+        """Atualiza contadores por situação na aba Resultados."""
+        labels = getattr(self, "labels_painel", None)
+        if not labels:
+            return
+        from collections import Counter
+        contagens = Counter(
+            str(item.get("Status", "") or "").strip() or "(vazio)"
+            for item in self.resultados
+        )
+        cores = {
+            "TOTAL": "#333333",
+            "VERIFICADO": "#1B5E20",
+            STATUS_PENDENTE: "#9C6500",
+            "DOCUMENTO INVÁLIDO": "#666666",
+            "NAO VERIFICADO": "#B26A00",
+            "ERRO": "#9C0006",
+        }
+        titulos = {STATUS_PENDENTE: "CLASSIFICADO — INDETERMINADO"}
+        for chave, rotulo in labels.items():
+            valor = (
+                len(self.resultados) if chave == "TOTAL"
+                else contagens.get(chave, 0)
+            )
+            titulo = titulos.get(chave, chave if chave != "TOTAL" else "Total")
+            rotulo.setText(
+                f"<b style='color:{cores.get(chave, "#333333")}'>"
+                f"{titulo}: {valor}</b>"
+            )
+
     def _ao_item(self, item: dict) -> None:
         self.resultados.append(item)
         self._inserir_linha_tabela(item)
@@ -3893,7 +4629,13 @@ class MainWindow(QMainWindow):
         preencher esses campos.
         """
         status = str(item.get("Status", "")).strip().upper()
-        # Documento inválido não volta para a revisão: refazer não adianta.
+        # Documento inválido e snapshot legado não voltam para a revisão:
+        # refazer a consulta não adianta (o site não aceita um e o outro
+        # depende de fonte externa, não da sessão atual).
+        # Indeterminado com Erro é falha de consulta: merece nova tentativa.
+        # Indeterminado sem Erro é dado migrado analisado, sem reconsulta útil.
+        if status == STATUS_PENDENTE:
+            return bool(str(item.get("Erro", "") or "").strip())
         if status == "DOCUMENTO INVÁLIDO":
             return False
         if status not in ("OK", "VERIFICADO"):
@@ -4048,6 +4790,7 @@ class MainWindow(QMainWindow):
             self.campo_cookie.text(),
             cookie_sessao=self.cookie_sessao,
             modo_revisao=True,
+            incluir_pagos=True,
             sem_navegador=self.campo_sem_navegador.isChecked(),
             pausa=max(0.5, self.campo_velocidade.value()),
             variar_pausa=self.campo_variar_pausa.isChecked(),
@@ -4075,6 +4818,7 @@ class MainWindow(QMainWindow):
             f"Revisão paralela iniciada: {len(registros)} pendente(s)."
         )
         self.worker_revisao.start()
+        self._atualizar_botao_pagos()
         self._log(f"Revisão paralela iniciada: {len(registros)} pendente(s).")
 
     def _ao_documento_iniciado_revisao(self, documento: str) -> None:
@@ -4208,16 +4952,35 @@ class MainWindow(QMainWindow):
 
     def _registros_observacao_vazia(self) -> list[dict]:
         """CPFs/CNPJs das linhas com OBSERVAÇÃO (débitos) ainda vazia."""
-        destino = self._arquivo_destino_observacao()
-        origem = destino if destino.exists() else (self.caminho_entrada or PLANILHA_BASE)
+        if self._usa_observacao():
+            destino = self._arquivo_destino_observacao()
+            origem = destino if destino.exists() else (
+                self.caminho_entrada or PLANILHA_BASE
+            )
+        else:
+            origem = self.caminho_entrada or PLANILHA_BASE
         if not origem or not Path(origem).exists():
             return []
         combo = getattr(self, "combo_aba", None)
         aba = combo.currentText() if combo is not None else ""
         return registros_observacao_vazia(Path(origem), aba or None)
 
-    def _iniciar_revisao_observacoes(self, registros: list[dict]) -> None:
+    def _progresso_revisao_completa(self) -> Path | None:
+        if not self.caminho_entrada:
+            return None
+        aba = (
+            self.combo_aba.currentText()
+            if self.combo_aba is not None and self.combo_aba.isEnabled()
+            else ""
+        )
+        return _arquivo_progresso_revisao_completa(self.caminho_entrada, aba)
+
+    def _iniciar_revisao_observacoes(
+            self, registros: list[dict], incluir_pagos: bool = True,
+            arquivo_progresso: Path | None = None, indice_inicial: int = 0,
+            resultados_iniciais: list[dict] | None = None) -> None:
         """Lança a consulta dos CPFs que ficaram com OBSERVAÇÃO vazia."""
+        self._avisar_se_http()
         self._registros_revisao = list(registros)
         self._carregar_cookie_brave(silent=True)
         self.barra_progresso.setValue(0)
@@ -4235,11 +4998,20 @@ class MainWindow(QMainWindow):
             registros,
             self.campo_cookie.text(),
             cookie_sessao=self.cookie_sessao,
+            indice_inicial=indice_inicial,
+            arquivo_progresso=arquivo_progresso,
+            resultados_iniciais=resultados_iniciais,
             modo_revisao=True,
+            incluir_pagos=True,
             sem_navegador=self.campo_sem_navegador.isChecked(),
             pausa=self.campo_velocidade.value(),
             variar_pausa=self.campo_variar_pausa.isChecked(),
             controle=self.controle_consulta,
+            entrada=str(self.caminho_entrada) if self.caminho_entrada else "",
+            aba=(
+                self.combo_aba.currentText()
+                if self.combo_aba.isEnabled() else ""
+            ),
             parent=self,
         )
         self.worker.progresso.connect(self._ao_progresso)
@@ -4249,6 +5021,7 @@ class MainWindow(QMainWindow):
         self.worker.finalizado.connect(self._ao_finalizar)
         self.worker.finished.connect(self._limpar_worker)
         self.worker.start()
+        self._atualizar_botao_pagos()
         self._log(
             f"Revisando {len(registros)} documento(s) com OBSERVAÇÃO vazia."
         )
@@ -4282,11 +5055,48 @@ class MainWindow(QMainWindow):
 
         self._consulta_interrompida = False
         self._revisao_concluida.clear()
+        arquivo = self._progresso_revisao_completa()
+        resultados_iniciais: list[dict] = []
+        progresso = ler_progresso(arquivo) if arquivo and arquivo.exists() else None
+        if progresso:
+            resultados_iniciais = list(progresso.get("resultados") or [])
+        # Só já foi conferido quem tem resultado confirmado. Usa o progresso
+        # da revisão completa e, se ele não existir, os resultados já
+        # carregados do progresso principal (execuções feitas antes desta
+        # versão). Documentos que falharam voltam para a fila.
+        base_resultados = resultados_iniciais or self.resultados
+        concluidos = {
+            re.sub(r"\D", "", str(item.get("CPF", "")))
+            for item in base_resultados
+            if str(item.get("Status", "")).strip().upper()
+            in ("OK", "VERIFICADO")
+        }
+        antes = len(documentos)
+        documentos = [
+            registro for registro in documentos
+            if re.sub(r"\D", "", self._documento_registro(registro))
+            not in concluidos
+        ]
+        if progresso:
+            self.resultados = _ordenar_resultados(resultados_iniciais)
+            self.tabela_resultados.setRowCount(0)
+            for item in self.resultados:
+                self._inserir_linha_tabela(item)
+            self._atualizar_painel_resultados()
+        if len(documentos) != antes:
+            self._log(
+                f"Retomando revisão completa: {len(documentos)} documento(s) "
+                f"pendente(s) de {antes}."
+            )
+        self._revisao_completa_ativa = True
         self._log(
             f"Revisão completa: {len(documentos)} documento(s) da aba "
             f"'{self.combo_aba.currentText() if self.combo_aba.isEnabled() else ''}'."
         )
-        self._iniciar_revisao_observacoes(documentos)
+        self._iniciar_revisao_observacoes(
+            documentos, incluir_pagos=True, arquivo_progresso=arquivo,
+            resultados_iniciais=resultados_iniciais,
+        )
 
     def revisar(self) -> None:
         """Após uma parada, consulta só o que falta; senão, os itens pendentes."""
@@ -4297,11 +5107,7 @@ class MainWindow(QMainWindow):
 
         # Versão "Lista 1 aba": primeiro aplica os débitos já obtidos; depois
         # consulta somente o que continua com OBSERVAÇÃO (débitos) vazia.
-        if (
-            self.caminho_entrada
-            and self.caminho_entrada.suffix.lower() in (".xlsx", ".xlsm")
-            and tem_coluna_observacao(self.caminho_entrada)
-        ):
+        if self._usa_observacao():
             self._consulta_interrompida = False
             self._revisao_concluida.clear()
             ja_preenchidos = self._preencher_observacoes_memoria()
@@ -4318,7 +5124,7 @@ class MainWindow(QMainWindow):
                     "Os débitos já obtidos foram aplicados ao arquivo.",
                 )
                 return
-            self._iniciar_revisao_observacoes(pendentes)
+            self._iniciar_revisao_observacoes(pendentes, incluir_pagos=True)
             return
 
         continuar = self._consulta_interrompida
@@ -4446,6 +5252,7 @@ class MainWindow(QMainWindow):
             self.campo_cookie.text(),
             cookie_sessao=self.cookie_sessao,
             modo_revisao=True,
+            incluir_pagos=True,
             sem_navegador=self.campo_sem_navegador.isChecked(),
             pausa=self.campo_velocidade.value(),
             variar_pausa=self.campo_variar_pausa.isChecked(),
@@ -4459,6 +5266,7 @@ class MainWindow(QMainWindow):
         self.worker.finalizado.connect(self._ao_finalizar)
         self.worker.finished.connect(self._limpar_worker)
         self.worker.start()
+        self._atualizar_botao_pagos()
         if continuar:
             self._log(
                 f"Revisando {len(registros)} documento(s) que faltavam "
@@ -4473,6 +5281,24 @@ class MainWindow(QMainWindow):
 
     def _ao_finalizar(self, mensagem: str) -> None:
         self._resetar_aviso_esc()
+        if getattr(self, "_revisao_completa_ativa", False):
+            self._revisao_completa_ativa = False
+            if "Concluído" in mensagem:
+                arquivo = self._progresso_revisao_completa()
+                if arquivo and arquivo.exists():
+                    try:
+                        arquivo.unlink()
+                    except OSError:
+                        pass
+        if self._fluxo_completo and "Concluído" in mensagem:
+            if self._usa_observacao():
+                try:
+                    self._preencher_observacoes_memoria()
+                except Exception as exc:  # noqa: BLE001
+                    self._log(f"Não foi possível atualizar a OBSERVAÇÃO: {exc}")
+            self._log("Consulta completa (2/3): classificando pagos...")
+            QTimer.singleShot(50, lambda: self.verificar_pagos(auto=True))
+            return
         self._log(mensagem)
         self.label_status.setText("Concluído" if "Concluído" in mensagem else mensagem)
         self.botao_executar.setEnabled(True)
@@ -4487,16 +5313,18 @@ class MainWindow(QMainWindow):
 
         # Nesta versão, ao concluir (consulta ou revisão) a OBSERVAÇÃO do
         # arquivo destino é atualizada automaticamente com os débitos obtidos.
-        if (
-            "Concluído" in mensagem
-            and self.caminho_entrada
-            and self.caminho_entrada.suffix.lower() in (".xlsx", ".xlsm")
-            and tem_coluna_observacao(self.caminho_entrada)
-        ):
+        if "Concluído" in mensagem and self._usa_observacao():
             try:
                 self._agendar_salvamento_saidas()
             except Exception as exc:  # noqa: BLE001
                 self._log(f"Não foi possível atualizar a OBSERVAÇÃO: {exc}")
+        elif "Concluído" in mensagem and self.resultados:
+            # Com a saída em 1 linha DESATIVADA, salva direto a planilha
+            # clássica (uma linha por débito), sem tocar na OBSERVAÇÃO.
+            try:
+                self._salvar_automatico()
+            except Exception as exc:  # noqa: BLE001
+                self._log(f"Não foi possível salvar o resultado: {exc}")
 
         if "interrompido" in mensagem.lower():
             if self._registros_revisao:
@@ -4539,11 +5367,7 @@ class MainWindow(QMainWindow):
         """Salva o processado sem diálogo — sempre no mesmo arquivo de destino."""
         if not self.resultados:
             return
-        relatorio_com_observacao = bool(
-            self.caminho_entrada
-            and self.caminho_entrada.suffix.lower() in (".xlsx", ".xlsm")
-            and tem_coluna_observacao(self.caminho_entrada)
-        )
+        relatorio_com_observacao = self._usa_observacao()
         if relatorio_com_observacao:
             destino = (
                 _pasta_relatorios()
@@ -4578,6 +5402,7 @@ class MainWindow(QMainWindow):
 
     def _limpar_worker(self) -> None:
         self.worker = None
+        self._atualizar_botao_revisar()
 
     def _gravar_resultado_classico(self) -> Path:
         """Gera a planilha Resultado estilo REVISADO: um débito por linha."""
@@ -4594,11 +5419,7 @@ class MainWindow(QMainWindow):
 
     def _agendar_salvamento_saidas(self) -> None:
         """Dispara a gravacao dos dois relatorios em segundo plano."""
-        if not (
-            self.caminho_entrada
-            and self.caminho_entrada.suffix.lower() in (".xlsx", ".xlsm")
-            and tem_coluna_observacao(self.caminho_entrada)
-        ):
+        if not self._usa_observacao():
             return
         if self._salvador_saidas is not None and self._salvador_saidas.isRunning():
             self._salvamento_pendente = True
@@ -4626,11 +5447,7 @@ class MainWindow(QMainWindow):
         # SEMPRE o mesmo arquivo: RELATORIO_CONTABILIDADE_2022_ANALISTAS_1_LINHA_TODOS_OS_DEBITOS.xlsx.
         # Ele é preenchido na coluna OBSERVAÇÃO (débitos); se já existir, é
         # atualizado (não é criado outro arquivo).
-        relatorio_com_observacao = bool(
-            self.caminho_entrada
-            and self.caminho_entrada.suffix.lower() in (".xlsx", ".xlsm")
-            and tem_coluna_observacao(self.caminho_entrada)
-        )
+        relatorio_com_observacao = self._usa_observacao()
 
         if relatorio_com_observacao:
             destino = (
@@ -4684,6 +5501,12 @@ class MainWindow(QMainWindow):
         if self.worker is not None and self.worker.isRunning():
             self.worker.stop()
             self.worker.wait(3000)
+        if self.worker_pagos is not None and self.worker_pagos.isRunning():
+            self.worker_pagos.stop()
+            self.worker_pagos.wait(3000)
+        if self.worker_cifs is not None and self.worker_cifs.isRunning():
+            self.worker_cifs.stop()
+            self.worker_cifs.wait(3000)
         if self.config_worker is not None and self.config_worker.isRunning():
             self.config_worker.requestInterruption()
             self.config_worker.wait(2000)

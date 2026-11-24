@@ -33,19 +33,24 @@ Call*, no sentido de consulta ao sistema) e consolidar o resultado em planilha.
 
 ---
 
-## Versões incluídas
+## Projeto
 
-| Pasta | Para que serve |
-|-------|----------------|
-| `RPC - Consulta de débitos/` | Versão original (**contabilidade**). Base histórica do projeto, com GUI PyQt6, scraper, modelos e banco de planilhas. |
-| `RPC - Consulta de débitos - REVISADO/` | **Versão recomendada** para Macs Apple Silicon. Corrigida e evoluída: retomada, Revisar inteligente, renovação de token, temas, retry automático. |
-| `RPC - Consulta de débitos - PORTABILIDADE X86/` | Mesmo programa revisado, preparado para **Mac Intel (x86_64)**, com virtualenv e browsers do Playwright separados (evita erro `bad CPU type`). |
+O programa único está na pasta **`RPC - Consulta débitos ISS DIGITAL E IPTU/`**.
+As versões antigas (`RPC - Consulta de débitos/`, `REVISADO` e
+`PORTABILIDADE X86`) foram removidas.
 
-Use **REVISADO** em Apple Silicon e **PORTABILIDADE X86** em Intel. A pasta
-base serve como referência do projeto original.
+Ele consulta os débitos no **ISS Digital**, grava todos os débitos em uma
+única linha na coluna `OBSERVAÇÃO (débitos)` e traz os botões **Verificar
+pagos** e **Verificar CIFs**:
 
-Cada versão traz também a pasta `cpf_cnpj/` com utilitários independentes para
-consultar situação cadastral de CNPJ ( BrasilAPI / ReceitaWS ), em GUI e terminal.
+- **Verificar pagos** cruza os débitos com a situação atual do site e informa
+  `PAGO?` e `COBRÁVEL?` — quais dívidas o gestor ainda pode cobrar;
+- **Verificar CIFs** consulta o Cadastro Imobiliário do **IPTU Digital** pelo
+  CPF/CNPJ e informa `CIF REAL?` e o endereço de cada imóvel.
+
+Veja o `README.md` dessa pasta. Ela também traz a pasta `cpf_cnpj/` com
+utilitários independentes para consultar situação cadastral de CNPJ
+(BrasilAPI / ReceitaWS), em GUI e terminal.
 
 ---
 
@@ -90,9 +95,9 @@ exemplo, qual imóvel (CIF) está devendo IPTU.
 ## Requisitos
 
 - **macOS** (o leitor de cookies usa Keychain + banco de cookies do Chromium).
-- **Python 3.10+** (3.9 na versão x86).
+- **Python 3.10+**.
 - Dependências: `PyQt6`, `playwright`, `openpyxl`, `cryptography`
-  (ver `requirements.txt` / `requirements-x86.txt`).
+  (ver `requirements.txt`).
 - **Brave, Chrome, Edge, Vivaldi ou Chromium** com o sistema aberto e logado — o programa detecta qual está logado.
 - Chromium do Playwright (instalado pelo próprio programa).
 
@@ -100,31 +105,21 @@ exemplo, qual imóvel (CIF) está devendo IPTU.
 
 ## Instalação
 
-### Versão REVISADO (Apple Silicon)
-
 Duplo clique em `Consulta de Débitos.app` (ou em
-`Abrir Consulta de Débitos.command`). O programa escolhe um Python com as
-dependências e instala o que faltar.
+`Abrir Consulta de Débitos.command`) dentro da pasta
+`RPC - Consulta débitos ISS DIGITAL E IPTU`. O programa escolhe um Python com
+as dependências e instala o que faltar.
 
 Se o macOS bloquear: **botão direito → Abrir → Abrir**.
 
 Pelo terminal:
 
 ```bash
-cd "RPC - Consulta de débitos - REVISADO"
+cd "RPC - Consulta débitos ISS DIGITAL E IPTU"
 pip install -r requirements.txt
 python -m playwright install chromium
 python3 main.py
 ```
-
-### Versão PORTABILIDADE X86 (Intel)
-
-1. Duplo clique em `Instalar dependências x86.command`
-   (ou `bash install_x86.sh`).
-2. Duplo clique em `Consulta de Débitos (x86).app`.
-
-O instalador cria `.venv-x86/` e instala browsers em
-`~/Library/Caches/ms-playwright-x86`, separados da instalação arm64.
 
 ---
 
@@ -318,11 +313,14 @@ Erros conhecidos tratados com retry: **HTTP 404** e **página de erro
 ## Estrutura dos arquivos
 
 ```
-RPC - Consulta de débitos - REVISADO/
-├── main.py              # GUI (PyQt6), planilhas, worker e instalação
-├── config.py            # URLs, porta CDP, cookie e pausa entre consultas
+RPC - Consulta débitos ISS DIGITAL E IPTU/
+├── main.py              # GUI (PyQt6), planilhas, workers e instalação
+├── config.py            # URLs (ISS Digital + IPTU), CDP, cookie e pausa
 ├── brave_cookie.py      # leitura segura dos cookies do navegador + validade do JWT
 ├── consulta_http.py     # modo experimental sem navegador
+├── verificar_pagos.py   # PAGO? / COBRÁVEL? (cruza com todas as situações)
+├── verificar_cifs.py    # CIF REAL? / endereço (Cadastro Imobiliário)
+├── preencher_observacao.py
 ├── requirements.txt     # dependências
 ├── GUIDE_DE_USO.txt     # guia rápido
 ├── RELATORIO_REVISAO.md # histórico de correções
@@ -330,17 +328,13 @@ RPC - Consulta de débitos - REVISADO/
 └── cpf_cnpj/            # utilitários de situação cadastral de CNPJ
 ```
 
-A versão X86 acrescenta `install_x86.sh`, `requirements-x86.txt` e o `.app`
-próprio. A versão base contém ainda `models.py`, `database.py`, `scraper/` e
-scripts de análise.
-
 ---
 
 ## Solução de problemas
 
 | Sintoma | O que fazer |
 |---------|-------------|
-| `bad CPU type` | Você está na arquitetura errada: use REVISADO (Apple Silicon) ou X86 (Intel). |
+| `bad CPU type` | O Chromium instalado não corresponde à arquitetura; reinstale o navegador pela aba **Ambiente**. |
 | "Cookie não encontrado" | Abra o sistema no navegador, faça login e clique em **Atualizar cookies**. |
 | `NAO VERIFICADO ... status 404` | Sessão/viewstate expirada: o programa já tenta 3x com token novo; se persistir, entre no sistema novamente e use **Revisar**. |
 | `página de erro (código 13429/13414)` | Mesmo tratamento acima: token renovado e consulta refeita automaticamente. |
@@ -352,8 +346,7 @@ scripts de análise.
 | macOS não abre o `.app` | Botão direito → Abrir → Abrir (app assinado localmente, sem certificado Apple). |
 | Navegador não inicia com depuração | Aba **Ambiente** → **Abrir navegador com depuração (9222)**. |
 
-Logs: `~/Library/Logs/ConsultaDebitos.log` (REVISADO) e
-`~/Library/Logs/ConsultaDebitos-x86.log` (X86).
+Logs: `~/Library/Logs/ConsultaDebitos.log`.
 
 ---
 

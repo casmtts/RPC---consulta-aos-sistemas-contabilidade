@@ -2,7 +2,8 @@
 # Alternativa ao .app: duplo clique abre o programa automaticamente.
 # Não é preciso digitar nada — esta janela fecha sozinha ao sair do programa.
 
-cd "/Users/casmtts/Documents/TRIBUTOS E TERRA/RPC - Consulta de débitos - REVISADO" || exit 1
+# Vai para a pasta onde este arquivo está, independentemente do nome da pasta.
+cd "$(dirname "$0")" || exit 1
 
 PYTHON=""
 for candidato in /opt/homebrew/bin/python3 /usr/local/bin/python3 "$(command -v python3 2>/dev/null)" /usr/bin/python3; do
