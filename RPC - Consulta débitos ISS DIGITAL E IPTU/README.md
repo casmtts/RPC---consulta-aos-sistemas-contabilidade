@@ -163,6 +163,8 @@ Arquivos gerados em `relatorios/`:
 
 Também respeita a pausa e pode ser interrompida com **ESC 2x**.
 
+O campo **Começar do registro** (aba Consulta) permite iniciar a consulta ou a revisão completa a partir de um número específico da planilha. Deixe em **1** para usar a retomada automática.
+
 A aba **Consulta** não oferece mais o modo "HTTP direto": o site é
 JSF/PrimeFaces e exige JavaScript, então essa opção ficou desativada com a
 explicação na própria tela. A consulta sempre usa o navegador automático ou a

@@ -27,6 +27,7 @@ from PyQt6.QtWidgets import (
     QCheckBox,
     QComboBox,
     QDoubleSpinBox,
+    QSpinBox,
     QFileDialog,
     QGroupBox,
     QHBoxLayout,
@@ -2577,7 +2578,7 @@ def _estilo_aplicacao() -> str:
             color: {p["botao_desativado_texto"]};
             background: {p["botao_desativado_fundo"]};
         }}
-        QLineEdit, QComboBox, QPlainTextEdit, QDoubleSpinBox {{
+        QLineEdit, QComboBox, QPlainTextEdit, QDoubleSpinBox, QSpinBox {{
             background: {p["campo_fundo"]};
             color: {p["texto"]};
             border: 1px solid {p["borda"]};
@@ -2585,7 +2586,7 @@ def _estilo_aplicacao() -> str:
             padding: 6px 8px;
             selection-background-color: {p["selecao"]};
         }}
-        QLineEdit:focus, QComboBox:focus, QPlainTextEdit:focus, QDoubleSpinBox:focus {{
+        QLineEdit:focus, QComboBox:focus, QPlainTextEdit:focus, QDoubleSpinBox:focus, QSpinBox:focus {{
             border-color: {p["realce"]};
         }}
         QTabWidget::pane {{
@@ -3480,6 +3481,19 @@ class MainWindow(QMainWindow):
         linha_botoes.addWidget(self.botao_salvar)
         execucao_layout.addLayout(linha_botoes)
 
+        linha_inicio = QHBoxLayout()
+        linha_inicio.addWidget(QLabel("Começar do registro:"))
+        self.campo_registro_inicial = QSpinBox()
+        self.campo_registro_inicial.setRange(1, 99999)
+        self.campo_registro_inicial.setValue(1)
+        self.campo_registro_inicial.setToolTip(
+            "Para iniciar de um número específico. 1 = desde o início / "
+            "retomada automática."
+        )
+        linha_inicio.addWidget(self.campo_registro_inicial)
+        linha_inicio.addStretch()
+        execucao_layout.addLayout(linha_inicio)
+
         self.label_dica_espaco = QLabel(
             'PRESSIONE "ESC" 2x PARA PARAR CONSULTA'
         )
@@ -4369,6 +4383,15 @@ class MainWindow(QMainWindow):
                 entrada=entrada, aba=aba,
             )
 
+        inicio_manual = self._registro_inicial_manual()
+        if inicio_manual > 1:
+            indice_inicial = inicio_manual - 1
+            resultados_iniciais = []
+            self._log(
+                f"Consulta começando no registro {inicio_manual} "
+                "(definido manualmente)."
+            )
+
         self.resultados = list(resultados_iniciais)
         self._cores_nomes = {}
         self.tabela_resultados.setRowCount(0)
@@ -4554,6 +4577,11 @@ class MainWindow(QMainWindow):
                 celula.setTextAlignment(
                     Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter
                 )
+
+    def _registro_inicial_manual(self) -> int:
+        """Número do registro escolhido manualmente (1 = automático)."""
+        campo = getattr(self, "campo_registro_inicial", None)
+        return int(campo.value()) if campo is not None else 1
 
     def _avisar_se_http(self) -> None:
         """Alerta quando o modo HTTP experimental está ativado."""
@@ -5087,6 +5115,13 @@ class MainWindow(QMainWindow):
             self._log(
                 f"Retomando revisão completa: {len(documentos)} documento(s) "
                 f"pendente(s) de {antes}."
+            )
+        inicio_manual = self._registro_inicial_manual()
+        if inicio_manual > 1:
+            documentos = documentos[inicio_manual - 1:]
+            self._log(
+                f"Revisão completa começando no registro {inicio_manual} "
+                "(definido manualmente)."
             )
         self._revisao_completa_ativa = True
         self._log(
