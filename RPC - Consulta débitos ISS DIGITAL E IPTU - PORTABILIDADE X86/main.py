@@ -85,7 +85,7 @@ from verificar_cifs import (
 from disclaimer import adicionar_aviso
 from regras_debito import (
     eh_debito_cobravel, situacao_eh_debito, STATUS_PENDENTE,
-    mensagem_amigavel_erro,
+    STATUS_ERRO_CONSULTA, mensagem_amigavel_erro,
 )
 
 # Relê o token do Brave quando falta menos de 1 minuto para expirar.
@@ -2068,8 +2068,8 @@ class ConsultaWorker(QThread):
             "Tipo de Débito": tipo,
             "Competência": competencia,
             "Valor (R$)": _campo(registro, "valor") or "0,00",
-            # Status original preservado: é o que o analista já tinha aprovado.
-            "Status": _campo(registro, "status") or STATUS_PENDENTE,
+            # A consulta não terminou: nunca manter COBRÁVEL aqui.
+            "Status": STATUS_ERRO_CONSULTA,
             "Erro": mensagem_amigavel_erro(mensagem),
             "CIF": _campo(registro, "cif"),
             "ID Dívida": _campo(registro, "id divida"),
@@ -2364,7 +2364,9 @@ class ConsultaWorker(QThread):
                         "Nome": nome, "CPF": documento,
                         "Tipo de Débito": descricao, "Competência": competencia_original or "-",
                         "Valor (R$)": "0,00",
-                        "Status": STATUS_PENDENTE if nao_confirmado else "VERIFICADO",
+                        "Status": (
+                            STATUS_ERRO_CONSULTA if nao_confirmado else "VERIFICADO"
+                        ),
                         "Erro": (
                             "Resultado sem confirmação suficiente — usar Revisar."
                             if nao_confirmado else ""
@@ -2433,7 +2435,8 @@ class ConsultaWorker(QThread):
                         "Nome": nome, "CPF": documento,
                         "Tipo de Débito": "-",
                         "Competência": competencia_original or "-",
-                        "Valor (R$)": "0,00", "Status": STATUS_PENDENTE,
+                        "Valor (R$)": "0,00",
+                        "Status": STATUS_ERRO_CONSULTA,
                         "Erro": mensagem_amigavel_erro(exc),
                         "Situação (site)": "",
                     }], indice_real)
@@ -2457,7 +2460,8 @@ class ConsultaWorker(QThread):
                         "Nome": nome, "CPF": documento,
                         "Tipo de Débito": "-",
                         "Competência": competencia_original or "-",
-                        "Valor (R$)": "0,00", "Status": STATUS_PENDENTE,
+                        "Valor (R$)": "0,00",
+                        "Status": STATUS_ERRO_CONSULTA,
                         "Erro": mensagem_amigavel_erro(exc),
                         "Situação (site)": "",
                     }], indice_real)
@@ -3762,6 +3766,7 @@ class MainWindow(QMainWindow):
             ("TOTAL", "Total"),
             ("VERIFICADO", "VERIFICADO"),
             (STATUS_PENDENTE, "CLASSIFICADO — INDETERMINADO"),
+            (STATUS_ERRO_CONSULTA, "ERRO DE CONSULTA"),
             ("DOCUMENTO INVÁLIDO", "DOCUMENTO INVÁLIDO"),
             ("NAO VERIFICADO", "NAO VERIFICADO"),
             ("ERRO", "ERRO"),
@@ -4849,6 +4854,7 @@ class MainWindow(QMainWindow):
             "TOTAL": "#333333",
             "VERIFICADO": "#1B5E20",
             STATUS_PENDENTE: "#9C6500",
+            STATUS_ERRO_CONSULTA: "#9C0006",
             "DOCUMENTO INVÁLIDO": "#666666",
             "NAO VERIFICADO": "#B26A00",
             "ERRO": "#9C0006",

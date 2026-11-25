@@ -34,6 +34,9 @@ STATUS_CONFIRMADOS = ("OK", "VERIFICADO")
 # Nome neutro exibido na interface para débitos que ainda precisam de
 # confirmação. Troque AQUI quando o nome definitivo for informado.
 STATUS_PENDENTE = "CLASSIFICADO — INDETERMINADO"
+# Consulta não concluída (sessão expirada, site fora, resposta duvidosa).
+# Nunca pode conviver com COBRÁVEL: sem confirmação integral, não há cobrança.
+STATUS_ERRO_CONSULTA = "ERRO DE CONSULTA"
 TIPOS_SEM_DEBITO = ("-", "SEM DEBITOS", "SEM DÉBITOS")
 
 

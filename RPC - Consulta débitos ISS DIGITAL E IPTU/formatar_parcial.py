@@ -12,7 +12,7 @@ import re
 from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 
-from regras_debito import sem_acento
+from regras_debito import STATUS_ERRO_CONSULTA, sem_acento
 from verificar_pagos import chave_competencia, classificar_situacao
 
 VERDE = ("FFC6EFCE", "FF006100")
@@ -25,6 +25,12 @@ ZEBRA = ("FFFFFFFF", "FFF2F2F2")
 
 def _digitos(valor: object) -> str:
     return re.sub(r"\D", "", str(valor or ""))
+
+
+def _valor_devido(item: dict) -> float:
+    """Valor numérico do débito (aceita 'R$ 1.253,91')."""
+    texto = re.sub(r"[^0-9,]", "", str(item.get("Valor (R$)") or ""))
+    return float(texto.replace(",", ".")) if texto else 0.0
 
 
 def _ano(valor: object) -> int:
@@ -102,8 +108,11 @@ def formatar_parcial(ws, linhas: list[dict]) -> None:
     for numero, item in enumerate(linhas, start=2):
         doc = _digitos(item.get("CPF"))
         situacao = str(item.get("Situação (site)", "") or "")
-        _, cobravel = classificar_situacao(situacao, 0, 0)
+        # Exige valor devido positivo: sem isso, uma situação "DÉBITO" com
+        # valor zerado (dado antigo/incompleto) não pode virar cobrança.
+        _, cobravel = classificar_situacao(situacao, 0, _valor_devido(item))
         status_antigo = str(item.get("Status", "") or "").strip().upper()
+        erro = str(item.get("Erro", "") or "").strip()
 
         chave = (
             doc,
@@ -115,29 +124,17 @@ def formatar_parcial(ws, linhas: list[dict]) -> None:
         vistos[chave] += 1
         duplicado = vistos[chave] > 1
 
-        if duplicado:
+        if erro:
+            # Consulta não concluída (sessão expirada, site fora, resposta
+            # duvidosa): nunca pode conviver com COBRÁVEL, mesmo que a
+            # classificação anterior fosse verde.
+            status = STATUS_ERRO_CONSULTA
+            motivo = erro
+            cor = VERMELHO
+        elif duplicado:
             status = "DUPLICADO — CONFERIR"
             motivo = "Débito aparenta ser duplicado — conferir antes de cobrar."
             cor = AMARELO
-        elif status_antigo == "COBRÁVEL" and cobravel != "NÃO":
-            # Uma reconsulta que não trouxe confirmação (sessão expirada,
-            # site fora, situação vazia) não pode desfazer uma classificação
-            # verde já aprovada. Só uma situação encerrada informada pelo
-            # site reverte a cobrança.
-            status = "COBRÁVEL"
-            motivo = (
-                "Classificação anterior mantida: o site não informou "
-                "pagamento/encerramento deste débito."
-            )
-            cor = VERDE
-        elif (
-            doc in sequencia
-            and cobravel != "NÃO"
-            and status_antigo != "DOCUMENTO INVÁLIDO"
-        ):
-            status = "COBRÁVEL"
-            motivo = f"IPTU em anos consecutivos ({sequencia[doc]})."
-            cor = VERDE
         elif (
             cobravel == "NÃO"
             or status_antigo in ("NÃO COBRAR", "DOCUMENTO INVÁLIDO")
@@ -155,6 +152,31 @@ def formatar_parcial(ws, linhas: list[dict]) -> None:
                     "Classificação anterior mantida: débito já marcado "
                     "como não cobrável."
                 )
+            cor = VERMELHO
+        elif status_antigo == "COBRÁVEL" and cobravel == "SIM":
+            # Verde só se a consulta confirmou dívida viva COM valor devido.
+            status = "COBRÁVEL"
+            motivo = (
+                "Débito confirmado no site como dívida viva, com valor em "
+                "aberto."
+            )
+            cor = VERDE
+        elif (
+            doc in sequencia
+            and cobravel == "SIM"
+            and status_antigo != "DOCUMENTO INVÁLIDO"
+        ):
+            status = "COBRÁVEL"
+            motivo = f"IPTU em anos consecutivos ({sequencia[doc]})."
+            cor = VERDE
+        elif status_antigo == "COBRÁVEL":
+            # Era cobrável, mas faltou alguma diligência (situação/valor não
+            # confirmados). Nunca manter o verde nesse caso.
+            status = STATUS_ERRO_CONSULTA
+            motivo = (
+                "Não foi possível confirmar a dívida no site (situação ou "
+                "valor em aberto não verificados) — refazer a consulta."
+            )
             cor = VERMELHO
         else:
             status = "CLASSIFICADO — INDETERMINADO"

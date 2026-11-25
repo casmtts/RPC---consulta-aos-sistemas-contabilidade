@@ -16,8 +16,11 @@ NOME_LEGENDA = "LEGENDA"
 
 ITENS_LEGENDA = (
     ("COR / DESTAQUE", "SIGNIFICADO", "O QUE O ANALISTA DEVE FAZER"),
-    ("COBRÁVEL", "Verde: débito classificado como cobrável",
+    ("COBRÁVEL", "Verde: dívida viva confirmada no site, com valor em aberto",
      "Conferir no sistema oficial antes de qualquer cobrança"),
+    ("ERRO DE CONSULTA",
+     "Vermelho: a consulta não foi concluída (sessão/site/resposta duvidosa)",
+     "Refazer a consulta; nunca cobrar com este status"),
     ("CLASSIFICADO — INDETERMINADO", "Laranja: análise sem confirmação do site",
      "Aguardar decisão do gestor; não cobrar automaticamente"),
     ("NÃO COBRAR", "Vermelho: pagamento ou encerramento informado",
@@ -63,8 +66,9 @@ TEXTO_AVISO = (
     "",
     "4. ATUALIDADE — As informações podem ter sido alteradas no SISTEMA "
     "OFICIAL após a data de extração. Registros marcados como "
-    "\"CLASSIFICADO — INDETERMINADO\", \"NÃO CONFIRMADO\" ou "
-    "\"NÃO VERIFICADO\" indicam que a consulta não foi suficiente para "
+    "\"CLASSIFICADO — INDETERMINADO\", \"NÃO CONFIRMADO\", "
+    "\"ERRO DE CONSULTA\" ou \"NÃO VERIFICADO\" indicam que a consulta "
+    "não foi suficiente para "
     "confirmar o dado e NÃO devem ser tratados como débito exigível.",
     "",
     "5. RESPONSABILIDADE — A decisão final sobre qualquer cobrança, "
