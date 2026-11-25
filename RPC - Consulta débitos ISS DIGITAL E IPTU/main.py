@@ -3450,6 +3450,17 @@ class MainWindow(QMainWindow):
         self.campo_cookie = QLineEdit()
         self.campo_cookie.setPlaceholderText("Cookie preenchido automaticamente do navegador")
         sessao_layout.addWidget(self.campo_cookie)
+        sessao_layout.addWidget(QLabel("JSESSIONID:"))
+        self.campo_sessao = QLineEdit()
+        self.campo_sessao.setEchoMode(QLineEdit.EchoMode.Password)
+        self.campo_sessao.setPlaceholderText(
+            "Informe manualmente se a leitura automática falhar"
+        )
+        self.campo_sessao.setToolTip(
+            "Sessão JSF do sistema. Necessária junto com o token JWT."
+        )
+        self.campo_sessao.textChanged.connect(self._ao_mudar_sessao)
+        sessao_layout.addWidget(self.campo_sessao)
         self.campo_cookie.setEchoMode(QLineEdit.EchoMode.Password)
         self.campo_cookie.setToolTip("Token de sessão lido do navegador. Fica oculto por segurança.")
         self.botao_cookie_brave = QPushButton("Buscar no navegador")
@@ -3723,6 +3734,10 @@ class MainWindow(QMainWindow):
 
     # ---------- Ações ----------
 
+    def _ao_mudar_sessao(self, texto: str) -> None:
+        """Mantém a sessão usada nas consultas em sincronia com o campo."""
+        self.cookie_sessao = str(texto or "").strip()
+
     def _carregar_cookie_brave(self, silent: bool = False) -> None:
         """Lê os cookies de sessão do Brave e preenche o campo de cookie."""
         try:
@@ -3733,6 +3748,7 @@ class MainWindow(QMainWindow):
             self._log(f"Não foi possível ler os cookies do navegador: {exc}")
             return
         self.campo_cookie.setText(cookies["__Secure-DA"])
+        self.campo_sessao.setText(cookies["JSESSIONID"])
         self.cookie_sessao = cookies["JSESSIONID"]
         navegador = brave_cookie.ULTIMO_NAVEGADOR or "navegador Chromium"
         self._log(f"Cookies de sessão obtidos do {navegador} (JWT + JSESSIONID).")

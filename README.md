@@ -40,7 +40,8 @@ Há duas pastas com o mesmo programa:
 | Pasta | Para que serve |
 |-------|----------------|
 | `RPC - Consulta débitos ISS DIGITAL E IPTU/` | Versão principal (Apple Silicon / Python nativo). |
-| `RPC - Consulta débitos ISS DIGITAL E IPTU - PORTABILIDADE X86/` | Versão para Mac Intel (x86_64) ou Rosetta, com `.venv-x86` e browsers do Playwright separados. |
+| `RPC - Consulta débitos ISS DIGITAL E IPTU - PORTABILIDADE X86/` | Versão para Mac Intel (x86_64) ou Rosetta, com `.venv-x86` e browsers separados. |
+| `RPC - Consulta débitos ISS DIGITAL E IPTU - PORTABILIDADE LINUX X86/` | Versão para **Linux Mint x86_64**, com `.venv-linux`, browsers separados e leitura de cookies via keyring do Linux. |
 
 As versões antigas (`RPC - Consulta de débitos/` e `REVISADO`) foram removidas.
 
