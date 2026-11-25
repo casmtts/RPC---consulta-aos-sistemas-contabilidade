@@ -2,10 +2,8 @@
 """Cópia automática dos relatórios para a pasta compartilhada do VirtualBox.
 
 A pasta ``departamento d.a`` existe no host e é compartilhada com a máquina
-virtual. Dentro dela os relatórios são separados por departamento:
-
-* ``Contabilidade`` — relatório da OBSERVAÇÃO (1 linha) e saída clássica;
-* ``Tributação`` — verificações de pagos e de CIFs.
+virtual. Os relatórios são copiados diretamente na raiz dela — o host não
+tem pastas de departamento, então o programa não cria subpastas.
 
 O programa localiza o compartilhamento automaticamente (montado pelo
 VirtualBox em ``/media/sf_...``) e copia somente os arquivos novos ou
@@ -21,9 +19,7 @@ import shutil
 import time
 from pathlib import Path
 
-from config import (
-    DEPARTAMENTOS, NOME_COMPARTILHAMENTO, PASTA_COMPARTILHADA,
-)
+from config import NOME_COMPARTILHAMENTO, PASTA_COMPARTILHADA
 
 RAIZ_PROGRAMA = Path(__file__).resolve().parent
 PASTA_LOCAL = RAIZ_PROGRAMA / NOME_COMPARTILHAMENTO
@@ -37,11 +33,6 @@ ERRO_SEM_COMPARTILHAMENTO = (
 )
 
 EXTENSOES_RELATORIO = {".xlsx", ".xlsm", ".csv"}
-# Saídas da verificação (cobrança) ficam com Tributação; o resto é contábil.
-SUFIXOS_TRIBUTACAO = (
-    "_VERIFICACAO_PAGOS", "_DETALHE_PAGOS",
-    "_VERIFICACAO_CIFS", "_DETALHE_CIFS",
-)
 
 
 def _normalizar(texto: object) -> str:
@@ -100,12 +91,6 @@ def localizar_pasta_compartilhada() -> tuple[Path, str] | None:
         return None
 
 
-def _departamento_do_arquivo(nome: str) -> str:
-    if any(sufixo in nome.upper() for sufixo in SUFIXOS_TRIBUTACAO):
-        return DEPARTAMENTOS[1]
-    return DEPARTAMENTOS[0]
-
-
 def _mesmo_arquivo(origem: Path, destino: Path) -> bool:
     """Evita recopiar (e sobrescrever) um arquivo idêntico."""
     try:
@@ -123,11 +108,11 @@ def sincronizar_relatorios(
     pasta_destino: Path | str | None = None,
     idade_minima: float = 1.0,
 ) -> tuple[list[str], str | None]:
-    """Copia os relatórios para a pasta compartilhada, por departamento.
+    """Copia os relatórios para a raiz da pasta compartilhada.
 
-    Devolve ``(copias, erro)``. ``copias`` contém rótulos como
-    ``Contabilidade/relatorio.xlsx``. Nunca lança exceção: se o
-    compartilhamento estiver indisponível, o erro é devolvido em ``erro``.
+    Devolve ``(copias, erro)``; ``copias`` contém os nomes dos arquivos.
+    Nunca lança exceção: se o compartilhamento estiver indisponível, o
+    erro é devolvido em ``erro``.
     """
     try:
         if pasta_destino:
@@ -145,9 +130,6 @@ def sincronizar_relatorios(
             ERRO_SEM_COMPARTILHAMENTO
             if origem_destino.startswith("pasta local") else None
         )
-
-        for departamento in DEPARTAMENTOS:
-            (destino / departamento).mkdir(parents=True, exist_ok=True)
 
         origem = Path(pasta_relatorios)
         if not origem.is_dir():
@@ -167,12 +149,11 @@ def sincronizar_relatorios(
             # Não copia um arquivo que ainda pode estar sendo gravado.
             if agora - info.st_mtime < idade_minima:
                 continue
-            departamento = _departamento_do_arquivo(arquivo.name)
-            alvo = destino / departamento / arquivo.name
+            alvo = destino / arquivo.name
             if _mesmo_arquivo(arquivo, alvo):
                 continue
             shutil.copy2(arquivo, alvo)
-            copias.append(f"{departamento}/{arquivo.name}")
+            copias.append(arquivo.name)
         return copias, aviso
     except Exception as exc:  # noqa: BLE001
         falha = f"{type(exc).__name__}: {exc}"

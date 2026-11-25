@@ -422,6 +422,30 @@ def _pasta_relatorios() -> Path:
     return pasta
 
 
+def _novo_nome_relatorio(stem: str, sufixo: str = "resultado") -> str:
+    """Nome inédito no modelo ``RELATORIO_..._DD.MM.YYYY_HHhMMmSs``.
+
+    A data da planilha consultada é substituída pela data/hora da geração e,
+    se ainda houver colisão, um número é acrescentado. Assim cada execução
+    cria um relatório novo: nunca sobrescreve a planilha consultada nem um
+    relatório anterior.
+    """
+    base = re.sub(r"_\d{2}\.\d{2}\.\d{4}$", "", stem)
+    if sufixo:
+        # "resultado" já contempla "resultado_parcial" (evita duplicar).
+        sufixos = {sufixo} | ({"resultado_parcial"} if sufixo == "resultado" else set())
+        if not any(base.lower().endswith(f"_{s.lower()}") for s in sufixos):
+            base = f"{base}_{sufixo}"
+    agora = datetime.now()
+    nome = f"{base}_{agora.strftime('%d.%m.%Y')}_{agora.strftime('%Hh%Mm%Ss')}"
+    candidato = nome
+    numero = 2
+    while (_pasta_relatorios() / f"{candidato}.xlsx").exists():
+        candidato = f"{nome}_{numero}"
+        numero += 1
+    return candidato
+
+
 def salvar_progresso(caminho: Path, processados: int, total: int,
                      resultados: list[dict], em_andamento: bool = False,
                      indice_atual: int = 0, entrada: str = "", aba: str = "",
@@ -857,6 +881,18 @@ def _campo(registro: dict, nome: str) -> str:
         if alvo in _sem_acento(chave):
             return str(valor).strip()
     return ""
+
+
+def _config_bool(config, chave: str, padrao: bool) -> bool:
+    """Lê um bool do QSettings sem cair na armadilha bool('false') == True.
+
+    O QSettings grava booleanos como texto ('true'/'false'); converter com
+    bool() direto faz 'false' virar True e a preferência volta sozinha.
+    """
+    valor = config.value(chave, padrao, type=bool)
+    if isinstance(valor, bool):
+        return valor
+    return str(valor).strip().lower() in ("true", "1", "yes", "on")
 
 
 def _competencia_resultado(
@@ -1827,7 +1863,8 @@ def consultar_debito(
                         return _executar_com_playwright(
                             consultar_debito, cpf, nome,
                             novos_cookies["__Secure-DA"], timeout, tipo,
-                            novos_cookies["JSESSIONID"], _tentativa=1,
+                            novos_cookies.get("JSESSIONID", cookie_sessao),
+                            _tentativa=1,
                             deve_parar=deve_parar,
                             sem_confirmacao=sem_confirmacao,
                             incluir_pagos=incluir_pagos,
@@ -1877,7 +1914,8 @@ def consultar_debito(
                 return _executar_com_playwright(
                     consultar_debito, cpf, nome,
                     novos_cookies["__Secure-DA"], timeout, tipo,
-                    novos_cookies["JSESSIONID"], _tentativa=1,
+                    novos_cookies.get("JSESSIONID", cookie_sessao),
+                    _tentativa=1,
                     deve_parar=deve_parar,
                     sem_confirmacao=sem_confirmacao,
                     incluir_pagos=incluir_pagos,
@@ -2006,6 +2044,68 @@ class ConsultaWorker(QThread):
         self._publicar(documento, novos, indice)
         return True
 
+    def _linhas_fallback_entrada(
+        self, registro: dict, mensagem: str
+    ) -> list[dict]:
+        """Recupera a linha original da planilha quando a consulta falhou.
+
+        A falha continua registrada na coluna Erro, mas a classificação já
+        aprovada (COBRÁVEL / NÃO COBRAR) não é rebaixada só porque a sessão
+        expirou ou o site não respondeu. Sem isso, um problema de sessão
+        desfaz todo o trabalho de classificação anterior.
+        """
+        tipo = _campo(registro, "tipo de debito")
+        competencia = _campo(registro, "competencia")
+        if not tipo or not competencia:
+            # Sem tipo/competência úteis na entrada, o snapshot legado decide.
+            return []
+        return [{
+            "Nome": _campo(registro, "nome"),
+            "CPF": (
+                _campo(registro, "cpf") or _campo(registro, "cnpj")
+                or _campo(registro, "documento") or _campo(registro, "cif")
+            ),
+            "Tipo de Débito": tipo,
+            "Competência": competencia,
+            "Valor (R$)": _campo(registro, "valor") or "0,00",
+            # Status original preservado: é o que o analista já tinha aprovado.
+            "Status": _campo(registro, "status") or STATUS_PENDENTE,
+            "Erro": mensagem_amigavel_erro(mensagem),
+            "CIF": _campo(registro, "cif"),
+            "ID Dívida": _campo(registro, "id divida"),
+            "Vencimento": _campo(registro, "vencimento"),
+            "Situação (site)": (
+                _campo(registro, "situacao (site)")
+                or _campo(registro, "situacao site")
+                or _campo(registro, "situacao")
+            ),
+            "MOTIVO": _campo(registro, "motivo"),
+        }]
+
+    def _publicar_falha(
+        self, documento: str, nome: str, competencia: str, indice: int,
+        mensagem: str, registro: dict | None = None,
+    ) -> bool:
+        """Publica a classificação anterior em vez de um '-' indeterminado."""
+        if registro is not None:
+            linhas = self._linhas_fallback_entrada(registro, mensagem)
+            if linhas:
+                self._publicar(documento, linhas, indice)
+                return True
+        return self._publicar_fallback_antigo(
+            documento, nome, competencia, indice, mensagem
+        )
+
+    def _sem_sessao_para_continuar(self, mensagem: str) -> bool:
+        """True se a falha é de login e não há sessão para recuperar."""
+        texto = str(mensagem or "").lower()
+        if not any(indicio in texto for indicio in (
+            "sessão", "sessao", "autentica", "token", "home",
+            "sem contribuinte", "404",
+        )):
+            return False
+        return not self.cookie and not _cdp_ativo()
+
     def _falha_rede_critica(self, mensagem: str) -> bool:
         """Para a rodada se o site estiver fora há vários documentos seguidos."""
         texto = str(mensagem).lower()
@@ -2032,6 +2132,19 @@ class ConsultaWorker(QThread):
     def run(self) -> None:
         total = len(self.registros)
         ok = erros = processados = 0
+
+        # Sem sessão autenticada o site redireciona para a home e TODAS as
+        # consultas falham. Encerrar antes do loop evita rebaixar débitos
+        # COBRÁVEL para INDETERMINADO e sobrescrever um relatório válido.
+        if not self.cookie and not _cdp_ativo():
+            aviso = (
+                "Sem sessão válida: entre no sistema no navegador e use "
+                "'Abrir Brave com depuração (9222)' ou 'Atualizar cookies' "
+                "na aba Ambiente antes de consultar. Nenhum resultado foi alterado."
+            )
+            self.aviso.emit(aviso)
+            self.finalizado.emit("Consulta cancelada: " + aviso)
+            return
 
         for indice, registro in enumerate(self.registros, start=1):
             if self._parar:
@@ -2311,8 +2424,9 @@ class ConsultaWorker(QThread):
                 # resultado para este item e encerra o loop imediatamente.
                 break
             except (ConsultaNaoVerificada, ConsultaHttpNaoVerificada) as exc:
-                if not self._publicar_fallback_antigo(
-                    documento, nome, competencia_original, indice_real, str(exc)
+                if not self._publicar_falha(
+                    documento, nome, competencia_original, indice_real,
+                    str(exc), registro,
                 ):
                     erros += 1
                     self._publicar(documento, [{
@@ -2325,9 +2439,18 @@ class ConsultaWorker(QThread):
                     }], indice_real)
                 if self._falha_rede_critica(str(exc)):
                     break
+                if self._sem_sessao_para_continuar(str(exc)):
+                    self.aviso.emit(
+                        "Sessão expirada e não há login no navegador — "
+                        "consulta encerrada para não gerar indeterminados. "
+                        "Abra o Brave com depuração (9222) / atualize os "
+                        "cookies e use 'Revisar' para refazer estes débitos."
+                    )
+                    break
             except Exception as exc:  # noqa: BLE001
-                if not self._publicar_fallback_antigo(
-                    documento, nome, competencia_original, indice_real, str(exc)
+                if not self._publicar_falha(
+                    documento, nome, competencia_original, indice_real,
+                    str(exc), registro,
                 ):
                     erros += 1
                     self._publicar(documento, [{
@@ -2339,6 +2462,14 @@ class ConsultaWorker(QThread):
                         "Situação (site)": "",
                     }], indice_real)
                 if self._falha_rede_critica(str(exc)):
+                    break
+                if self._sem_sessao_para_continuar(str(exc)):
+                    self.aviso.emit(
+                        "Sessão expirada e não há login no navegador — "
+                        "consulta encerrada para não gerar indeterminados. "
+                        "Abra o Brave com depuração (9222) / atualize os "
+                        "cookies e use 'Revisar' para refazer estes débitos."
+                    )
                     break
 
             processados = indice_real
@@ -2394,6 +2525,20 @@ def _cdp_ativo() -> bool:
         return False
 
 
+# O Playwright sempre avisa isso no Linux Mint (ele só considera "oficial"
+# o Ubuntu). É um aviso inofensivo: a build do Ubuntu 24.04 é a correta.
+AVISO_PLAYWRIGHT_MINT = (
+    "Chromium: Linux Mint usa a build compatível do Ubuntu 24.04 "
+    "(aviso do Playwright — é normal e o navegador funciona)."
+)
+
+
+def _eh_aviso_fallback_playwright(texto: str) -> bool:
+    return (
+        "BEWARE: your OS is not officially supported by Playwright" in texto
+    )
+
+
 class ComandoWorker(QThread):
     """Executa comandos (pip/playwright) em segundo plano, sem travar a GUI."""
 
@@ -2405,6 +2550,7 @@ class ComandoWorker(QThread):
         super().__init__(parent)
         self.comandos = comandos
         self.diretorio = diretorio
+        self._aviso_playwright_emitido = False
 
     def run(self) -> None:
         for comando in self.comandos:
@@ -2423,7 +2569,15 @@ class ComandoWorker(QThread):
                 return
             if processo.stdout is not None:
                 for linha in processo.stdout:
-                    self.saida.emit(linha.rstrip())
+                    texto = linha.rstrip()
+                    if _eh_aviso_fallback_playwright(texto):
+                        # Mostra uma explicação única, em português, em vez do
+                        # aviso em inglês que parece um erro.
+                        if not self._aviso_playwright_emitido:
+                            self._aviso_playwright_emitido = True
+                            self.saida.emit(AVISO_PLAYWRIGHT_MINT)
+                        continue
+                    self.saida.emit(texto)
             codigo = processo.wait()
             if codigo != 0:
                 self.finalizado.emit(
@@ -2804,10 +2958,14 @@ class MainWindow(QMainWindow):
         self._fluxo_completo = False
         self._salvador_saidas: SalvarSaidasWorker | None = None
         self._salvamento_pendente = False
+        # Destino dos relatórios automáticos: gerado uma vez por execução,
+        # com data/hora no nome, para não sobrescrever relatórios anteriores.
+        self._destino_auto: Path | None = None
+        self._destino_auto_parcial: Path | None = None
         self.config_worker: QThread | None = None
         self._config = QSettings("ConsultaDebitos", "ConsultaDebitos")
-        self.gerar_umalinha = bool(
-            self._config.value("gerar_umalinha", True)
+        self.gerar_umalinha = _config_bool(
+            self._config, "gerar_umalinha", True
         )
 
         self._montar_interface()
@@ -3564,7 +3722,7 @@ class MainWindow(QMainWindow):
         linha_velocidade.addWidget(self.campo_velocidade)
         self.campo_variar_pausa = QCheckBox("Variar a pausa (anti-detecção)")
         self.campo_variar_pausa.setChecked(
-            bool(self._config.value("variar_pausa", False))
+            _config_bool(self._config, "variar_pausa", False)
         )
         self.campo_variar_pausa.setToolTip(
             "Aplica uma variação aleatória de ±30% na pausa para não criar "
@@ -3722,6 +3880,20 @@ class MainWindow(QMainWindow):
             self.botao_instalar_navegador, self.botao_abrir_brave,
             self.botao_abrir_sistema, self.botao_atualizar_cookies,
         ]
+        if sys.platform.startswith("linux"):
+            self.botao_guest_additions = QPushButton(
+                "Instalar Guest Additions (arrastar/soltar)"
+            )
+            self.botao_guest_additions.setToolTip(
+                "Instala o VBoxClient — necessário para arrastar e soltar e "
+                "para a área de transferência dentro da VM. Pede autorização "
+                "(pkexec/sudo) e reinicia a sessão gráfica."
+            )
+            self.botao_guest_additions.clicked.connect(
+                self.instalar_guest_additions
+            )
+            ambiente_layout.addWidget(self.botao_guest_additions)
+            self.botoes_config.append(self.botao_guest_additions)
         abas.addTab(self.aba_ambiente, "Ambiente")
         abas.currentChanged.connect(self._ao_mudar_aba_principal)
 
@@ -3748,10 +3920,13 @@ class MainWindow(QMainWindow):
             self._log(f"Não foi possível ler os cookies do navegador: {exc}")
             return
         self.campo_cookie.setText(cookies["__Secure-DA"])
-        self.campo_sessao.setText(cookies["JSESSIONID"])
-        self.cookie_sessao = cookies["JSESSIONID"]
+        # O JSESSIONID é opcional: o site o cria ao abrir a home.
+        sessao = cookies.get("JSESSIONID", "")
+        self.campo_sessao.setText(sessao)
+        self.cookie_sessao = sessao
         navegador = brave_cookie.ULTIMO_NAVEGADOR or "navegador Chromium"
-        self._log(f"Cookies de sessão obtidos do {navegador} (JWT + JSESSIONID).")
+        detalhe = "JWT + JSESSIONID" if sessao else "JWT (JSESSIONID será criado pelo site)"
+        self._log(f"Cookies de sessão obtidos do {navegador} ({detalhe}).")
         aviso = _aviso_expiracao(cookies["__Secure-DA"])
         if aviso:
             self._log(f"ATENÇÃO: {aviso}")
@@ -3934,9 +4109,38 @@ class MainWindow(QMainWindow):
                 f"{'OK  ' if ok else 'FALTA'}  {descricao}"
             )
 
+        import ctypes.util
+        import shutil
+
         item(True, f"Python {sys.version.split()[0]}")
         for pacote in ("PyQt6", "playwright", "openpyxl", "cryptography"):
             item(importlib.util.find_spec(pacote) is not None, f"{pacote} instalado")
+
+        item(
+            ctypes.util.find_library("xcb-cursor") is not None,
+            "libxcb-cursor0 (plugin xcb do Qt) instalada",
+        )
+        item(
+            shutil.which("secret-tool") is not None,
+            "secret-tool (keyring dos cookies) instalado",
+        )
+        if sys.platform.startswith("linux"):
+            vboxclient = shutil.which("VBoxClient")
+            item(
+                vboxclient is not None,
+                (
+                    "VBoxClient instalado (arrastar/soltar e área de transferência)"
+                    if vboxclient else
+                    "VBoxClient ausente — use 'Instalar Guest Additions' "
+                    "na aba Ambiente para habilitar arrastar/soltar"
+                ),
+            )
+        navegadores = [
+            nome for nome in ("brave-browser", "brave", "google-chrome",
+                              "chromium", "microsoft-edge", "vivaldi")
+            if shutil.which(nome) is not None
+        ]
+        item(bool(navegadores), f"Navegador Chromium: {', '.join(navegadores) or 'nenhum'}")
 
         diretorio = Path(__file__).resolve().parent
         item(
@@ -3968,8 +4172,13 @@ class MainWindow(QMainWindow):
 
         try:
             cookies = buscar_cookies_no_brave()
-            item(True, "Cookies do navegador: JWT + JSESSIONID encontrados")
-            self.cookie_sessao = cookies["JSESSIONID"]
+            sessao = cookies.get("JSESSIONID", "")
+            self.cookie_sessao = sessao
+            detalhe = (
+                "JWT + JSESSIONID encontrados" if sessao
+                else "JWT encontrado (JSESSIONID criado pelo site)"
+            )
+            item(True, f"Cookies do navegador: {detalhe}")
         except Exception as exc:  # noqa: BLE001
             item(False, f"Cookies do navegador: {exc}")
 
@@ -4019,6 +4228,20 @@ class MainWindow(QMainWindow):
         comandos = [[sys.executable, "-m", "playwright", "install", "chromium"]]
         self._iniciar_config_worker(
             ComandoWorker(comandos, diretorio=diretorio, parent=self)
+        )
+
+    def instalar_guest_additions(self) -> None:
+        """Instala o VBoxClient (drag-and-drop / área de transferência)."""
+        diretorio = str(Path(__file__).resolve().parent)
+        script = Path(diretorio) / "instalar_guest_additions.sh"
+        if not script.exists():
+            QMessageBox.warning(
+                self, "Guest Additions",
+                f"Script não encontrado: {script}",
+            )
+            return
+        self._iniciar_config_worker(
+            ComandoWorker([[str(script)]], diretorio=diretorio, parent=self)
         )
 
     def instalar_tudo(self) -> None:
@@ -5415,7 +5638,7 @@ class MainWindow(QMainWindow):
                 pass
 
     def _salvar_automatico(self, parcial: bool = False) -> None:
-        """Salva o processado sem diálogo — sempre no mesmo arquivo de destino."""
+        """Salva em arquivo NOVO com data/hora — nunca sobrescreve outro."""
         if not self.resultados:
             return
         relatorio_com_observacao = self._usa_observacao()
@@ -5425,13 +5648,18 @@ class MainWindow(QMainWindow):
                 / f"{self.caminho_entrada.stem}_1_LINHA_TODOS_OS_DEBITOS.xlsx"
             )
         else:
-            nome = (
-                f"{self.caminho_entrada.stem}_resultado"
-                if self.caminho_entrada else "resultado_debitos"
-            )
-            if parcial:
-                nome += "_parcial"
-            destino = _pasta_relatorios() / f"{nome}.xlsx"
+            atributo = "_destino_auto_parcial" if parcial else "_destino_auto"
+            destino = getattr(self, atributo)
+            if destino is None:
+                stem = (
+                    self.caminho_entrada.stem
+                    if self.caminho_entrada else "RELATORIO_DEBITOS"
+                )
+                sufixo = "resultado_parcial" if parcial else "resultado"
+                destino = _pasta_relatorios() / (
+                    f"{_novo_nome_relatorio(stem, sufixo)}.xlsx"
+                )
+                setattr(self, atributo, destino)
         try:
             if relatorio_com_observacao:
                 self._agendar_salvamento_saidas()
@@ -5507,9 +5735,11 @@ class MainWindow(QMainWindow):
             )
             caminho = None
         else:
-            nome = "resultado_debitos.xlsx"
-            if self.caminho_entrada:
-                nome = f"{self.caminho_entrada.stem}_resultado.xlsx"
+            stem = (
+                self.caminho_entrada.stem
+                if self.caminho_entrada else "RELATORIO_DEBITOS"
+            )
+            nome = f"{_novo_nome_relatorio(stem)}.xlsx"
             caminho, _ = QFileDialog.getSaveFileName(
                 self, "Salvar resultado",
                 str(_pasta_relatorios() / nome),

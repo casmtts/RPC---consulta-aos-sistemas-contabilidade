@@ -119,6 +119,17 @@ def formatar_parcial(ws, linhas: list[dict]) -> None:
             status = "DUPLICADO — CONFERIR"
             motivo = "Débito aparenta ser duplicado — conferir antes de cobrar."
             cor = AMARELO
+        elif status_antigo == "COBRÁVEL" and cobravel != "NÃO":
+            # Uma reconsulta que não trouxe confirmação (sessão expirada,
+            # site fora, situação vazia) não pode desfazer uma classificação
+            # verde já aprovada. Só uma situação encerrada informada pelo
+            # site reverte a cobrança.
+            status = "COBRÁVEL"
+            motivo = (
+                "Classificação anterior mantida: o site não informou "
+                "pagamento/encerramento deste débito."
+            )
+            cor = VERDE
         elif (
             doc in sequencia
             and cobravel != "NÃO"
@@ -127,12 +138,23 @@ def formatar_parcial(ws, linhas: list[dict]) -> None:
             status = "COBRÁVEL"
             motivo = f"IPTU em anos consecutivos ({sequencia[doc]})."
             cor = VERDE
-        elif cobravel == "NÃO" or status_antigo == "DOCUMENTO INVÁLIDO":
+        elif (
+            cobravel == "NÃO"
+            or status_antigo in ("NÃO COBRAR", "DOCUMENTO INVÁLIDO")
+        ):
             status = "NÃO COBRAR"
-            motivo = (
-                f"Situação informada pelo site: "
-                f"{situacao or 'pagamento/encerramento'}."
-            )
+            if cobravel == "NÃO":
+                motivo = (
+                    f"Situação informada pelo site: "
+                    f"{situacao or 'pagamento/encerramento'}."
+                )
+            elif status_antigo == "DOCUMENTO INVÁLIDO":
+                motivo = "Documento inválido — conferir a planilha."
+            else:
+                motivo = (
+                    "Classificação anterior mantida: débito já marcado "
+                    "como não cobrável."
+                )
             cor = VERMELHO
         else:
             status = "CLASSIFICADO — INDETERMINADO"

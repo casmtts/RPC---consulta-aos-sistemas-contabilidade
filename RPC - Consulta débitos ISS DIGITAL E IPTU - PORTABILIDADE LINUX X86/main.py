@@ -884,6 +884,18 @@ def _campo(registro: dict, nome: str) -> str:
     return ""
 
 
+def _config_bool(config, chave: str, padrao: bool) -> bool:
+    """Lê um bool do QSettings sem cair na armadilha bool('false') == True.
+
+    O QSettings grava booleanos como texto ('true'/'false'); converter com
+    bool() direto faz 'false' virar True e a preferência volta sozinha.
+    """
+    valor = config.value(chave, padrao, type=bool)
+    if isinstance(valor, bool):
+        return valor
+    return str(valor).strip().lower() in ("true", "1", "yes", "on")
+
+
 def _competencia_resultado(
     competencia_original: str, debito: dict, modo_revisao: bool
 ) -> str:
@@ -2953,8 +2965,8 @@ class MainWindow(QMainWindow):
         self._destino_auto_parcial: Path | None = None
         self.config_worker: QThread | None = None
         self._config = QSettings("ConsultaDebitos", "ConsultaDebitos")
-        self.gerar_umalinha = bool(
-            self._config.value("gerar_umalinha", True)
+        self.gerar_umalinha = _config_bool(
+            self._config, "gerar_umalinha", True
         )
 
         self._montar_interface()
@@ -3747,7 +3759,7 @@ class MainWindow(QMainWindow):
         linha_velocidade.addWidget(self.campo_velocidade)
         self.campo_variar_pausa = QCheckBox("Variar a pausa (anti-detecção)")
         self.campo_variar_pausa.setChecked(
-            bool(self._config.value("variar_pausa", False))
+            _config_bool(self._config, "variar_pausa", False)
         )
         self.campo_variar_pausa.setToolTip(
             "Aplica uma variação aleatória de ±30% na pausa para não criar "
@@ -3897,8 +3909,8 @@ class MainWindow(QMainWindow):
             "Copiar relatórios ao compartilhamento"
         )
         self.botao_compartilhamento.setToolTip(
-            "Copia os relatórios para a pasta 'departamento d.a' do "
-            "VirtualBox (Contabilidade / Tributação)"
+            "Copia os relatórios para a raiz da pasta 'departamento d.a' "
+            "do VirtualBox"
         )
         self.botao_compartilhamento.clicked.connect(
             lambda _checked=False: self._sincronizar_compartilhamento(manual=True)
@@ -3911,25 +3923,26 @@ class MainWindow(QMainWindow):
         linha_verificar.addStretch()
         ambiente_layout.addLayout(linha_verificar)
 
-        self.botao_guest_additions = QPushButton(
-            "Instalar Guest Additions (arrastar/soltar)"
-        )
-        self.botao_guest_additions.setToolTip(
-            "Instala o VBoxClient — necessário para arrastar e soltar e para "
-            "a área de transferência dentro da VM. Pede autorização "
-            "(pkexec/sudo) e reinicia a sessão gráfica."
-        )
-        self.botao_guest_additions.clicked.connect(
-            self.instalar_guest_additions
-        )
-        ambiente_layout.addWidget(self.botao_guest_additions)
-
         self.botoes_config = [
             self.botao_instalar_tudo, self.botao_instalar_deps,
             self.botao_instalar_navegador, self.botao_abrir_brave,
             self.botao_abrir_sistema, self.botao_atualizar_cookies,
-            self.botao_compartilhamento, self.botao_guest_additions,
+            self.botao_compartilhamento,
         ]
+        if sys.platform.startswith("linux"):
+            self.botao_guest_additions = QPushButton(
+                "Instalar Guest Additions (arrastar/soltar)"
+            )
+            self.botao_guest_additions.setToolTip(
+                "Instala o VBoxClient — necessário para arrastar e soltar e "
+                "para a área de transferência dentro da VM. Pede autorização "
+                "(pkexec/sudo) e reinicia a sessão gráfica."
+            )
+            self.botao_guest_additions.clicked.connect(
+                self.instalar_guest_additions
+            )
+            ambiente_layout.addWidget(self.botao_guest_additions)
+            self.botoes_config.append(self.botao_guest_additions)
         abas.addTab(self.aba_ambiente, "Ambiente")
         abas.currentChanged.connect(self._ao_mudar_aba_principal)
 
