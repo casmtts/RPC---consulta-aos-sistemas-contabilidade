@@ -2097,6 +2097,12 @@ class ConsultaWorker(QThread):
             documento, nome, competencia, indice, mensagem
         )
 
+    def _sessao_utilizavel(self) -> bool:
+        """Só vale CDP ativo ou JWT + JSESSIONID (contribuinte selecionado)."""
+        if _cdp_ativo():
+            return True
+        return bool(self.cookie and self.cookie_sessao)
+
     def _sem_sessao_para_continuar(self, mensagem: str) -> bool:
         """True se a falha é de login e não há sessão para recuperar."""
         texto = str(mensagem or "").lower()
@@ -2105,7 +2111,7 @@ class ConsultaWorker(QThread):
             "sem contribuinte", "404",
         )):
             return False
-        return not self.cookie and not _cdp_ativo()
+        return not self._sessao_utilizavel()
 
     def _falha_rede_critica(self, mensagem: str) -> bool:
         """Para a rodada se o site estiver fora há vários documentos seguidos."""
@@ -2132,16 +2138,19 @@ class ConsultaWorker(QThread):
 
     def run(self) -> None:
         total = len(self.registros)
-        ok = erros = processados = 0
+        ok = erros = processados = ultimo_indice = 0
 
-        # Sem sessão autenticada o site redireciona para a home e TODAS as
-        # consultas falham. Encerrar antes do loop evita rebaixar débitos
-        # COBRÁVEL para INDETERMINADO e sobrescrever um relatório válido.
-        if not self.cookie and not _cdp_ativo():
+        # O site exige um JSESSIONID com contribuinte já selecionado no
+        # servidor. Apenas o JWT faz o BASE_URL redirecionar para a home e
+        # TODAS as consultas falham (com 3 tentativas cada). Encerrar antes
+        # do loop evita horas de progresso parado e não altera o relatório.
+        if not self._sessao_utilizavel():
             aviso = (
-                "Sem sessão válida: entre no sistema no navegador e use "
-                "'Abrir Brave com depuração (9222)' ou 'Atualizar cookies' "
-                "na aba Ambiente antes de consultar. Nenhum resultado foi alterado."
+                "Sem sessão válida: o Brave precisa estar com depuração na "
+                "porta 9222 (aba Ambiente → 'Abrir Brave com depuração') com "
+                "o sistema aberto e o contribuinte selecionado. Sem isso o "
+                "site redireciona para a home e nenhuma consulta funciona. "
+                "Nenhum resultado foi alterado."
             )
             self.aviso.emit(aviso)
             self.finalizado.emit("Consulta cancelada: " + aviso)
@@ -2157,6 +2166,7 @@ class ConsultaWorker(QThread):
             # Índice real na planilha de entrada: a revisão trabalha com uma
             # lista filtrada, então "indice" não corresponde à linha original.
             indice_real = int(_campo(registro, "_indice_original") or indice)
+            ultimo_indice = indice_real
 
             # Se o token estiver a menos de 1 minuto de vencer, relê o
             # cookie do Brave antes da próxima consulta — sem parar nada.
@@ -2500,9 +2510,13 @@ class ConsultaWorker(QThread):
         # Gravação final forçada: o salvamento comum é espaçado no tempo e
         # poderia deixar de registrar o último item concluído.
         if self.arquivo_progresso is not None:
+            # "Em andamento" só com índice válido: parar antes do primeiro
+            # registro não pode gerar em_andamento=True + indice_atual=0.
+            interrompido_no_indice = bool(self._parar and ultimo_indice > 0)
             salvar_progresso(
                 self.arquivo_progresso, processados, total, self.resultados,
-                em_andamento=bool(self._parar), indice_atual=processados,
+                em_andamento=interrompido_no_indice,
+                indice_atual=ultimo_indice if interrompido_no_indice else processados,
                 entrada=self.entrada, aba=self.aba, forcado=True,
             )
 
@@ -4633,29 +4647,51 @@ class MainWindow(QMainWindow):
         indice_inicial = 0
         resultados_iniciais: list[dict] = []
         progresso = ler_progresso(arquivo_progresso) if arquivo_progresso else None
-        # Contador zerado/suspeito: reconstrói do que já está na planilha
-        # Resultado salva, em vez de recomeçar do registro 1.
-        if (
-            (progresso is None or int(progresso.get("processados", 0)) < 10)
-            and arquivo_progresso is not None
-        ):
+
+        def _tem_trabalho(p: dict | None) -> bool:
+            """Progresso vale se algo já foi feito OU iniciado.
+
+            Um arquivo com processados=0 mas em_andamento=True e indice_atual=1
+            significa que a primeira consulta começou e não terminou — não é
+            um progresso zerado para descartar.
+            """
+            indice = int(p.get("indice_atual") or 0)
+            return bool(p) and (
+                int(p.get("processados") or 0) > 0
+                or (bool(p.get("em_andamento")) and indice >= 1)
+                or bool(p.get("resultados"))
+            )
+
+        # Só reconstrói da planilha quando o progresso realmente não existe.
+        if arquivo_progresso is not None and not _tem_trabalho(progresso):
             reconstruido = self._progresso_pela_planilha(arquivo_progresso, aba)
             if reconstruido is not None:
                 progresso = reconstruido
         entrada = str(self.caminho_entrada) if self.caminho_entrada else ""
-        if progresso and 0 < progresso["processados"] < len(self.registros):
-            processados = progresso["processados"]
+        if progresso and _tem_trabalho(progresso) and \
+                int(progresso.get("processados") or 0) < len(self.registros):
+            processados = int(progresso.get("processados") or 0)
             em_andamento = bool(progresso.get("em_andamento"))
             indice_em_andamento = int(progresso.get("indice_atual") or 0)
+            salvos = progresso.get("resultados") or []
 
             # Sempre refaz o ÚLTIMO registro: se a busca foi interrompida no
             # meio, o resultado dele não pode ser considerado confiável.
-            if em_andamento and 1 <= indice_em_andamento <= len(self.registros):
+            if (
+                em_andamento
+                and 1 <= indice_em_andamento <= len(self.registros)
+                and (processados == 0 or indice_em_andamento >= processados)
+            ):
                 refazer = indice_em_andamento
                 detalhe = " (a última consulta foi interrompida antes de terminar)"
-            else:
+            elif processados > 0:
                 refazer = processados
                 detalhe = " (o último registro será checado novamente)"
+            else:
+                refazer = max(
+                    1, max(int(i.get("_indice") or 0) for i in salvos)
+                )
+                detalhe = " (retomado dos resultados salvos)"
             refazer = max(1, min(refazer, len(self.registros)))
 
             # Retomagem AUTOMÁTICA: a caixa antiga podia ser fechada com ESC
@@ -4670,7 +4706,17 @@ class MainWindow(QMainWindow):
                 f"Retomando automaticamente no registro {refazer} de "
                 f"{len(self.registros)}{detalhe}."
             )
-        elif progresso and progresso["processados"] >= len(self.registros):
+        elif progresso and (
+            int(progresso.get("processados") or 0) >= len(self.registros)
+            or (
+                bool(progresso.get("em_andamento"))
+                and int(progresso.get("indice_atual") or 0) < 1
+                and int(progresso.get("processados") or 0) == 0
+                and not progresso.get("resultados")
+            )
+        ):
+            # Progresso concluído ou inconsistente (em_andamento sem índice):
+            # grava estado limpo para valer a regra "um ou outro".
             salvar_progresso(
                 arquivo_progresso, 0, len(self.registros), [],
                 entrada=entrada, aba=aba,
