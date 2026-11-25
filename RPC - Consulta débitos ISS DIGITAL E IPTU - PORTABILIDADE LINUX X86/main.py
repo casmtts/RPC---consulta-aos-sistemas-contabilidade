@@ -4668,8 +4668,10 @@ class MainWindow(QMainWindow):
             significa que a primeira consulta começou e não terminou — não é
             um progresso zerado para descartar.
             """
+            if not p:
+                return False
             indice = int(p.get("indice_atual") or 0)
-            return bool(p) and (
+            return (
                 int(p.get("processados") or 0) > 0
                 or (bool(p.get("em_andamento")) and indice >= 1)
                 or bool(p.get("resultados"))
