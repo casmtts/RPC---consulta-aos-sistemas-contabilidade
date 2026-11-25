@@ -12,6 +12,39 @@ bash "Abrir Consulta de Débitos (Linux).sh"
 O instalador cria `.venv-linux` e instala o Chromium do Playwright em
 `~/.cache/ms-playwright-linux`, separado de outras instalações.
 
+> **Aviso "BEWARE: your OS is not officially supported by Playwright"**: no
+> Linux Mint isso é esperado — o Playwright só marca o Ubuntu como "oficial" e
+> baixa a build compatível do Ubuntu 24.04. O Chromium funciona normalmente.
+> O instalador e a aba Ambiente já mostram essa mensagem em português, sem o
+> texto assustador em inglês. Não é um erro de instalação.
+
+## Pasta compartilhada `departamento d.a` (VirtualBox)
+
+Os relatórios gerados em `relatorios/` são copiados **automaticamente** para a
+pasta compartilhada do host, separados por departamento:
+
+```
+departamento d.a/
+├── Contabilidade/   (OBSERVAÇÃO em 1 linha e saída clássica)
+└── Tributação/      (VERIFICACAO_PAGOS / DETALHE_PAGOS / VERIFICACAO_CIFS / DETALHE_CIFS)
+```
+
+No VirtualBox, compartilhe a pasta do host com o nome `departamento d.a`. O
+programa localiza sozinho o ponto de montagem (`/media/sf_departamento d.a`,
+`/mnt/...` etc.), cria as subpastas e copia somente arquivos novos ou alterados
+(a cada 5 segundos). Arquivos `.json` de progresso e bloqueios `~$...` não são
+copiados. Se o compartilhamento não estiver montado, a pasta local
+`departamento d.a/` é usada como fallback, para nada se perder.
+
+Para usar outro caminho, ajuste `PASTA_COMPARTILHADA` em `config.py` ou defina
+a variável de ambiente de mesmo nome. Na aba **Ambiente**, o botão
+**Copiar relatórios ao compartilhamento** força a cópia na hora.
+
+Se o compartilhamento estiver montado como `root:root` (sem permissão de
+escrita), rode `bash montar_compartilhamento.sh`. Ele remonta com o `uid/gid`
+do usuário e é executado automaticamente no login (autostart instalado em
+`~/.config/autostart/montar-compartilhamento.desktop`).
+
 ## Cookies no Linux
 
 O programa tenta ler automaticamente `JWT` e `JSESSIONID` dos navegadores

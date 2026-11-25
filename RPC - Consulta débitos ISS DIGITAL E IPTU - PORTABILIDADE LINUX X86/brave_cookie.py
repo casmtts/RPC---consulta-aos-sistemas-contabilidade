@@ -132,7 +132,13 @@ def _ler_cookies(caminho_db: Path, chave: bytes) -> dict[str, str]:
 
 
 def buscar_cookies_no_brave() -> dict[str, str]:
-    """Tenta cada navegador; devolve JWT + JSESSIONID ou levanta erro claro."""
+    """Tenta cada navegador; devolve o JWT (e o JSESSIONID, se existir).
+
+    O JSESSIONID é criado pelo próprio site ao abrir a home — ele NÃO precisa
+    já estar no perfil do navegador. Exigir os dois cookies fazia o programa
+    rejeitar uma sessão perfeitamente válida (JWT presente, JSESSIONID ainda
+    não gravado) e bloquear toda a consulta.
+    """
     global ULTIMO_NAVEGADOR
     tentados: list[str] = []
     for nome, relativo, app in _NAVEGADORES:
@@ -143,16 +149,16 @@ def buscar_cookies_no_brave() -> dict[str, str]:
         try:
             chave = _chave_derivada(app)
             cookies = _ler_cookies(caminho, chave)
-            if all(nome_cookie in cookies for nome_cookie in _NOMES):
+            if _NOMES[0] in cookies:  # __Secure-DA: credencial de login
                 ULTIMO_NAVEGADOR = nome
                 return cookies
         except Exception:  # noqa: BLE001
             continue
 
     raise RuntimeError(
-        "Não foi possível ler os cookies do sistema no Linux. "
-        "Abra o sistema no navegador e informe manualmente o token JWT e o "
-        "JSESSIONID na aba Consulta. "
+        "Não foi possível ler o token de autenticação (__Secure-DA) do "
+        "navegador. Entre no sistema no Brave (deixe a sessão logada) e tente "
+        "novamente; se ainda falhar, informe o JWT manualmente na aba Consulta. "
         f"Navegadores verificados: {', '.join(tentados) or 'nenhum'}."
     )
 
