@@ -424,7 +424,7 @@ def _pasta_relatorios() -> Path:
 
 
 def _novo_nome_relatorio(stem: str, sufixo: str = "resultado") -> str:
-    """Nome inédito no modelo ``RELATORIO_..._DD.MM.YYYY_HHhMMmSs``.
+    """Nome inédito no modelo ``RELATORIO_..._DD.MM.YYYY_HHMMSS``.
 
     A data da planilha consultada é substituída pela data/hora da geração e,
     se ainda houver colisão, um número é acrescentado. Assim cada execução
@@ -438,7 +438,7 @@ def _novo_nome_relatorio(stem: str, sufixo: str = "resultado") -> str:
         if not any(base.lower().endswith(f"_{s.lower()}") for s in sufixos):
             base = f"{base}_{sufixo}"
     agora = datetime.now()
-    nome = f"{base}_{agora.strftime('%d.%m.%Y')}_{agora.strftime('%Hh%Mm%Ss')}"
+    nome = f"{base}_{agora.strftime('%d.%m.%Y')}_{agora.strftime('%H%M%S')}"
     candidato = nome
     numero = 2
     while (_pasta_relatorios() / f"{candidato}.xlsx").exists():
