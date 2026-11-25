@@ -4833,7 +4833,7 @@ class MainWindow(QMainWindow):
         """Cor do texto do Status (o fundo é a cor da pessoa)."""
         p = PALETA
         status = str(item.get("Status", "")).strip().upper()
-        if status == "ERRO":
+        if status in ("ERRO", STATUS_ERRO_CONSULTA):
             return p["texto_erro"]
         if status == "NAO VERIFICADO":
             return p["texto_atencao"]
@@ -4923,7 +4923,7 @@ class MainWindow(QMainWindow):
     def _ao_item(self, item: dict) -> None:
         self.resultados.append(item)
         self._inserir_linha_tabela(item)
-        if item.get("Status") in ("ERRO", "NAO VERIFICADO"):
+        if item.get("Status") in ("ERRO", STATUS_ERRO_CONSULTA, "NAO VERIFICADO"):
             self._log(
                 f"{item.get('Status')} {item.get('CPF', '')}: {item.get('Erro', '')}"
             )
