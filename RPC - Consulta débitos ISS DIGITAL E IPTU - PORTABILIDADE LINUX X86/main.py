@@ -424,7 +424,7 @@ def _pasta_relatorios() -> Path:
 
 
 def _novo_nome_relatorio(stem: str, sufixo: str = "resultado") -> str:
-    """Nome inédito no modelo ``RELATORIO_..._DD.MM.YYYY_HHMMSS``.
+    """Nome inédito no modelo ``RELATORIO_..._DD.MM.YYYY_HH.MM.SS``.
 
     A data da planilha consultada é substituída pela data/hora da geração e,
     se ainda houver colisão, um número é acrescentado. Assim cada execução
@@ -438,7 +438,7 @@ def _novo_nome_relatorio(stem: str, sufixo: str = "resultado") -> str:
         if not any(base.lower().endswith(f"_{s.lower()}") for s in sufixos):
             base = f"{base}_{sufixo}"
     agora = datetime.now()
-    nome = f"{base}_{agora.strftime('%d.%m.%Y')}_{agora.strftime('%H%M%S')}"
+    nome = f"{base}_{agora.strftime('%d.%m.%Y')}_{agora.strftime('%H.%M.%S')}"
     candidato = nome
     numero = 2
     while (_pasta_relatorios() / f"{candidato}.xlsx").exists():
@@ -3706,14 +3706,27 @@ class MainWindow(QMainWindow):
         execucao_layout.addLayout(linha_botoes)
 
         linha_inicio = QHBoxLayout()
-        linha_inicio.addWidget(QLabel("Começar do registro:"))
+        linha_inicio.addWidget(QLabel("Início da consulta:"))
+        self.combo_inicio = QComboBox()
+        self.combo_inicio.addItems((
+            "Continuar de onde parou (padrão)",
+            "Escolher registro inicial",
+        ))
+        self.combo_inicio.setToolTip(
+            "Padrão: retoma automaticamente do progresso salvo. Escolha a "
+            "segunda opção somente se quiser começar de um número específico."
+        )
         self.campo_registro_inicial = QSpinBox()
         self.campo_registro_inicial.setRange(1, 99999)
         self.campo_registro_inicial.setValue(1)
+        self.campo_registro_inicial.setEnabled(False)
         self.campo_registro_inicial.setToolTip(
-            "Para iniciar de um número específico. 1 = desde o início / "
-            "retomada automática."
+            "Disponível somente com 'Escolher registro inicial'."
         )
+        self.combo_inicio.currentIndexChanged.connect(
+            lambda indice: self.campo_registro_inicial.setEnabled(indice == 1)
+        )
+        linha_inicio.addWidget(self.combo_inicio)
         linha_inicio.addWidget(self.campo_registro_inicial)
         linha_inicio.addStretch()
         execucao_layout.addLayout(linha_inicio)
@@ -4918,7 +4931,10 @@ class MainWindow(QMainWindow):
                 )
 
     def _registro_inicial_manual(self) -> int:
-        """Número do registro escolhido manualmente (1 = automático)."""
+        """1 = continuar de onde parou; senão, o número escolhido."""
+        combo = getattr(self, "combo_inicio", None)
+        if combo is not None and combo.currentIndex() != 1:
+            return 1
         campo = getattr(self, "campo_registro_inicial", None)
         return int(campo.value()) if campo is not None else 1
 
