@@ -1323,6 +1323,29 @@ def _aplicar_periodo(pagina) -> None:
         if mes_inicial:
             mes_inicial.select_option("JANEIRO", timeout=5000)
             pagina.wait_for_timeout(500)
+
+        # Período FINAL sempre em DEZEMBRO do ano atual: se ficar em branco,
+        # o site assume abril e deixa fora as competências posteriores.
+        # Cada campo é tratado à parte para um falhar não impedir o outro.
+        try:
+            ano_final = pagina.locator("#anoFinal_input")
+            if ano_final.count():
+                ano_final.click(timeout=5000)
+                ano_final.press("ControlOrMeta+A", timeout=5000)
+                ano_final.press_sequentially(
+                    str(datetime.now().year), delay=30, timeout=5000
+                )
+                ano_final.press("Tab", timeout=5000)
+                pagina.wait_for_timeout(800)
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            mes_final = pagina.query_selector("#mesFinal_input")
+            if mes_final:
+                mes_final.select_option("DEZEMBRO", timeout=5000)
+                pagina.wait_for_timeout(500)
+        except Exception:  # noqa: BLE001
+            pass
     except Exception:  # noqa: BLE001
         pass
 
