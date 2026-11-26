@@ -338,6 +338,10 @@ TEMAS = {
         "texto_erro": "#B71C1C",
         "texto_atencao": "#E65100",
         "texto_neutro": "#52606D",
+        "acento_ok": "#1B5E20",
+        "acento_erro": "#B71C1C",
+        "acento_atencao": "#E65100",
+        "acento_neutro": "#52606D",
         "linha_borda": "#EEF2F6",
     },
     "escuro": {
@@ -374,6 +378,10 @@ TEMAS = {
         "texto_erro": "#FFFFFF",
         "texto_atencao": "#FFFFFF",
         "texto_neutro": "#FFFFFF",
+        "acento_ok": "#69F0AE",
+        "acento_erro": "#FF8A80",
+        "acento_atencao": "#FFD180",
+        "acento_neutro": "#FFFFFF",
         "linha_borda": "#222222",
     },
 }
@@ -2841,6 +2849,23 @@ def _estilo_aplicacao() -> str:
         }}
         QProgressBar::chunk {{ background: {p["progresso_barra"]}; border-radius: 5px; }}
         QLabel {{ color: {p["texto"]}; }}
+        /* Caixas de diálogo e dicas herdam a cor branca do QWidget, mas
+           mantinham o fundo branco nativo: letra branca sobre fundo branco. */
+        QMessageBox {{
+            background: {p["painel"]};
+            color: {p["texto"]};
+        }}
+        QMessageBox QLabel {{
+            color: {p["texto"]};
+            background: transparent;
+        }}
+        QToolTip {{
+            background: {p["painel"]};
+            color: {p["texto"]};
+            border: 1px solid {p["borda"]};
+            border-radius: 4px;
+            padding: 4px 6px;
+        }}
         QLabel#dicaEspaco {{
             color: {p["titulo_grupo"]};
             font-weight: 600;
@@ -3150,7 +3175,9 @@ class MainWindow(QMainWindow):
                     "font-weight: 600; border: 1px solid #B36300; "
                     "border-radius: 6px; padding: 4px 10px; }"
                 )
-            estilo_etiqueta = "QLabel { color: #D32F2F; font-weight: 700; }"
+            estilo_etiqueta = (
+                f"QLabel {{ color: {PALETA['texto_erro']}; font-weight: 700; }}"
+            )
             texto = "ESC NOVAMENTE PARA PARAR"
         else:
             estilo_botao = ""
@@ -5016,13 +5043,13 @@ class MainWindow(QMainWindow):
             for item in self.resultados
         )
         cores = {
-            "TOTAL": "#333333",
-            "VERIFICADO": "#1B5E20",
-            STATUS_PENDENTE: "#9C6500",
-            STATUS_ERRO_CONSULTA: "#9C0006",
-            "DOCUMENTO INVÁLIDO": "#666666",
-            "NAO VERIFICADO": "#B26A00",
-            "ERRO": "#9C0006",
+            "TOTAL": PALETA["acento_neutro"],
+            "VERIFICADO": PALETA["acento_ok"],
+            STATUS_PENDENTE: PALETA["acento_atencao"],
+            STATUS_ERRO_CONSULTA: PALETA["acento_erro"],
+            "DOCUMENTO INVÁLIDO": PALETA["acento_neutro"],
+            "NAO VERIFICADO": PALETA["acento_atencao"],
+            "ERRO": PALETA["acento_erro"],
         }
         titulos = {STATUS_PENDENTE: "CLASSIFICADO — INDETERMINADO"}
         for chave, rotulo in labels.items():
@@ -5032,7 +5059,7 @@ class MainWindow(QMainWindow):
             )
             titulo = titulos.get(chave, chave if chave != "TOTAL" else "Total")
             rotulo.setText(
-                f"<b style='color:{cores.get(chave, "#333333")}'>"
+                f"<b style='color:{cores.get(chave, PALETA['acento_neutro'])}'>"
                 f"{titulo}: {valor}</b>"
             )
 
