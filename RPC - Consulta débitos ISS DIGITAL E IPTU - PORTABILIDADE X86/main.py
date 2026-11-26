@@ -5006,8 +5006,10 @@ class MainWindow(QMainWindow):
             )
 
         inicio_manual = self._registro_inicial_manual()
-        if inicio_manual > 1:
-            indice_inicial = inicio_manual - 1
+        if self._inicio_manual_ativo():
+            # Vale mesmo com número 1: foi explicitamente escolhido, então
+            # não pode cair na retomada automática do progresso.
+            indice_inicial = max(0, inicio_manual - 1)
             resultados_iniciais = []
             self._log(
                 f"Consulta começando no registro {inicio_manual} "
@@ -5217,11 +5219,13 @@ class MainWindow(QMainWindow):
                     Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter
                 )
 
-    def _registro_inicial_manual(self) -> int:
-        """1 = continuar de onde parou; senão, o número escolhido."""
+    def _inicio_manual_ativo(self) -> bool:
+        """True quando o usuário escolheu 'Escolher registro inicial'."""
         combo = getattr(self, "combo_inicio", None)
-        if combo is not None and combo.currentIndex() != 1:
-            return 1
+        return combo is not None and combo.currentIndex() == 1
+
+    def _registro_inicial_manual(self) -> int:
+        """Número digitado; só é usado quando _inicio_manual_ativo()."""
         campo = getattr(self, "campo_registro_inicial", None)
         return int(campo.value()) if campo is not None else 1
 
@@ -5753,8 +5757,8 @@ class MainWindow(QMainWindow):
                 f"pendente(s) de {antes}."
             )
         inicio_manual = self._registro_inicial_manual()
-        if inicio_manual > 1:
-            documentos = documentos[inicio_manual - 1:]
+        if self._inicio_manual_ativo():
+            documentos = documentos[max(0, inicio_manual - 1):]
             self._log(
                 f"Revisão completa começando no registro {inicio_manual} "
                 "(definido manualmente)."
