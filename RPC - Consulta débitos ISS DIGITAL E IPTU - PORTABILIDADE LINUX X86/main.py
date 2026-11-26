@@ -5319,7 +5319,7 @@ class MainWindow(QMainWindow):
         self.label_revisao_paralela.setText(f"Revisão paralela: {mensagem}")
 
     def _preencher_tabela_resultados(self) -> None:
-        """Tela: contribuintes em ordem alfabética; competência final por último.
+        """Tela: ordem da consulta (linha 1, 2, 3...), competência final por último.
 
         O relatório salvo continua com os débitos mais novos primeiro.
         """
@@ -5327,9 +5327,8 @@ class MainWindow(QMainWindow):
         for item in sorted(
             self.resultados,
             key=lambda r: (
-                _sem_acento(str(r.get("Nome", "") or "")).strip().lower(),
-                _chave_ordem_competencia(r),
                 int(r.get("_indice") or 0),
+                _chave_ordem_competencia(r),
                 str(r.get("CPF", "") or ""),
             ),
         ):
