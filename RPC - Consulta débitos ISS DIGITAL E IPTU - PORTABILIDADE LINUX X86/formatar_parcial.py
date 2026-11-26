@@ -153,31 +153,17 @@ def formatar_parcial(ws, linhas: list[dict]) -> None:
                     "como não cobrável."
                 )
             cor = VERMELHO
-        elif status_antigo == "COBRÁVEL" and cobravel == "SIM":
-            # Verde só se a consulta confirmou dívida viva COM valor devido.
+        elif cobravel == "SIM":
+            # Dívida viva confirmada no site, com valor devido e SEM
+            # comprovante de pagamento. Não exigir sequência de IPTU nem
+            # classificação verde anterior: o que mata a cobrança é haver
+            # prova de pagamento/encerramento, tratada no ramo acima.
             status = "COBRÁVEL"
             motivo = (
-                "Débito confirmado no site como dívida viva, com valor em "
-                "aberto."
+                "Débito confirmado como dívida viva; o site não informou "
+                "pagamento/encerramento."
             )
             cor = VERDE
-        elif (
-            doc in sequencia
-            and cobravel == "SIM"
-            and status_antigo != "DOCUMENTO INVÁLIDO"
-        ):
-            status = "COBRÁVEL"
-            motivo = f"IPTU em anos consecutivos ({sequencia[doc]})."
-            cor = VERDE
-        elif status_antigo == "COBRÁVEL":
-            # Era cobrável, mas faltou alguma diligência (situação/valor não
-            # confirmados). Nunca manter o verde nesse caso.
-            status = STATUS_ERRO_CONSULTA
-            motivo = (
-                "Não foi possível confirmar a dívida no site (situação ou "
-                "valor em aberto não verificados) — refazer a consulta."
-            )
-            cor = VERMELHO
         else:
             status = "CLASSIFICADO — INDETERMINADO"
             motivo = (
