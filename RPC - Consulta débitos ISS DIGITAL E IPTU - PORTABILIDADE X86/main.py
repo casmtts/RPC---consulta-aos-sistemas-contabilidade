@@ -1572,6 +1572,7 @@ def consultar_debito(
     deve_parar=None,
     sem_confirmacao: list | None = None,
     incluir_pagos: bool = False,
+    segundo_plano: bool = False,
 ) -> list[dict]:
     """Consulta um documento (CPF/CNPJ/CIF) no site.
 
@@ -1602,12 +1603,15 @@ def consultar_debito(
     tipo_pesquisa = ""
 
     # Preferir a sessão real do Brave (via CDP): é onde o "Pesquisar" funciona.
+    # Em segundo plano, porém, abrir aba no Brave rouba o foco da tela a cada
+    # consulta: usa Chromium headless com os mesmos cookies, sem aparecer.
     usar_cdp = False
-    try:
-        with urllib.request.urlopen(f"{CDP_URL}/json/version", timeout=2) as resp:
-            usar_cdp = resp.status == 200
-    except Exception:  # noqa: BLE001
-        usar_cdp = False
+    if not segundo_plano:
+        try:
+            with urllib.request.urlopen(f"{CDP_URL}/json/version", timeout=2) as resp:
+                usar_cdp = resp.status == 200
+        except Exception:  # noqa: BLE001
+            usar_cdp = False
 
     with sync_playwright() as playwright:
         pagina_cdp = None
@@ -1822,7 +1826,7 @@ def consultar_debito(
             # indisponível após o AJAX: nesse caso o retorno é None.
             documento_confirmado = _verificar_pesquisa(
                 pagina, cpf, seletor_documento, tipo_pessoa,
-                incluir_pagos=incluir_pagos,
+                incluir_pagos=incluir_pagos, segundo_plano=segundo_plano,
             )
 
             tem_tabela, tem_dados, sem_registros = _estado_resultado(pagina)
@@ -1875,7 +1879,7 @@ def consultar_debito(
                             _tentativa=1,
                             deve_parar=deve_parar,
                             sem_confirmacao=sem_confirmacao,
-                            incluir_pagos=incluir_pagos,
+                            incluir_pagos=incluir_pagos, segundo_plano=segundo_plano,
                         )
                     except ConsultaInterrompida:
                         raise
@@ -1895,7 +1899,7 @@ def consultar_debito(
                         tipo, cookie_sessao, _tentativa=1,
                         deve_parar=deve_parar,
                         sem_confirmacao=sem_confirmacao,
-                        incluir_pagos=incluir_pagos,
+                        incluir_pagos=incluir_pagos, segundo_plano=segundo_plano,
                     )
                 raise ConsultaNaoVerificada(
                     "Após a pesquisa não apareceu tabela de resultados nem mensagem "
@@ -1926,7 +1930,7 @@ def consultar_debito(
                     _tentativa=1,
                     deve_parar=deve_parar,
                     sem_confirmacao=sem_confirmacao,
-                    incluir_pagos=incluir_pagos,
+                    incluir_pagos=incluir_pagos, segundo_plano=segundo_plano,
                 )
             except ConsultaInterrompida:
                 raise
@@ -1944,7 +1948,7 @@ def consultar_debito(
             consultar_debito, cpf, nome, cookie_value, timeout, tipo,
             cookie_sessao, _tentativa=1, deve_parar=deve_parar,
             sem_confirmacao=sem_confirmacao,
-            incluir_pagos=incluir_pagos,
+            incluir_pagos=incluir_pagos, segundo_plano=segundo_plano,
         )
     return debitos
 
@@ -1969,7 +1973,8 @@ class ConsultaWorker(QThread):
                  sem_navegador: bool = False, entrada: str = "", aba: str = "",
                  variar_pausa: bool = False, controle: dict | None = None,
                  documentos_ignorar: set[str] | None = None,
-                 incluir_pagos: bool = False, parent=None):
+                 incluir_pagos: bool = False, segundo_plano: bool = False,
+                 parent=None):
         super().__init__(parent)
         self.entrada = entrada
         self.aba = aba
@@ -1982,6 +1987,7 @@ class ConsultaWorker(QThread):
         self.resultados = list(resultados_iniciais or [])
         self.modo_revisao = modo_revisao
         self.incluir_pagos = incluir_pagos
+        self.segundo_plano = segundo_plano
         self.pausa = max(0.0, float(pausa))
         self.sem_navegador = sem_navegador
         self.variar_pausa = variar_pausa
@@ -2354,6 +2360,7 @@ class ConsultaWorker(QThread):
                                     deve_parar=self.parar_solicitado,
                                     sem_confirmacao=sem_confirmacao,
                                     incluir_pagos=self.incluir_pagos,
+                                    segundo_plano=self.segundo_plano,
                                 )
                             if (
                                 debitos
@@ -3822,6 +3829,17 @@ class MainWindow(QMainWindow):
         )
         execucao_layout.addWidget(self.campo_sem_navegador)
 
+        self.campo_segundo_plano = QCheckBox(
+            "Segundo plano (não trazer o navegador para a frente)"
+        )
+        self.campo_segundo_plano.setChecked(False)
+        self.campo_segundo_plano.setToolTip(
+            "Quando ativado, a consulta usa um Chromium invisível com os "
+            "mesmos cookies do navegador, em vez de abrir uma aba no Brave. "
+            "A tela não troca de janela a cada documento."
+        )
+        execucao_layout.addWidget(self.campo_segundo_plano)
+
         self.campo_revisar_paralelo = QCheckBox(
             "Revisar pendências em paralelo (segunda consulta)"
         )
@@ -4836,6 +4854,7 @@ class MainWindow(QMainWindow):
             arquivo_progresso=arquivo_progresso,
             resultados_iniciais=resultados_iniciais,
             sem_navegador=self.campo_sem_navegador.isChecked(),
+            segundo_plano=self.campo_segundo_plano.isChecked(),
             pausa=self.campo_velocidade.value(),
             variar_pausa=self.campo_variar_pausa.isChecked(),
             controle=self.controle_consulta,
@@ -5232,6 +5251,7 @@ class MainWindow(QMainWindow):
             modo_revisao=True,
             incluir_pagos=True,
             sem_navegador=self.campo_sem_navegador.isChecked(),
+            segundo_plano=self.campo_segundo_plano.isChecked(),
             pausa=max(0.5, self.campo_velocidade.value()),
             variar_pausa=self.campo_variar_pausa.isChecked(),
             controle=self.controle_consulta,
@@ -5444,6 +5464,7 @@ class MainWindow(QMainWindow):
             modo_revisao=True,
             incluir_pagos=True,
             sem_navegador=self.campo_sem_navegador.isChecked(),
+            segundo_plano=self.campo_segundo_plano.isChecked(),
             pausa=self.campo_velocidade.value(),
             variar_pausa=self.campo_variar_pausa.isChecked(),
             controle=self.controle_consulta,
@@ -5699,6 +5720,7 @@ class MainWindow(QMainWindow):
             modo_revisao=True,
             incluir_pagos=True,
             sem_navegador=self.campo_sem_navegador.isChecked(),
+            segundo_plano=self.campo_segundo_plano.isChecked(),
             pausa=self.campo_velocidade.value(),
             variar_pausa=self.campo_variar_pausa.isChecked(),
             controle=self.controle_consulta,
