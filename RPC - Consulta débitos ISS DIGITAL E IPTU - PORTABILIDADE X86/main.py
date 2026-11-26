@@ -4012,9 +4012,10 @@ class MainWindow(QMainWindow):
             "Revisar pendências em paralelo (segunda consulta)"
         )
         self.campo_revisar_paralelo.setToolTip(
-            "Enquanto a consulta principal roda, reconfulta em paralelo os itens "
-            "com erro, NAO VERIFICADO ou 'Sem débitos'. Os resultados revisados "
-            "entram na tabela somente quando as duas consultas terminam."
+            "Enquanto a consulta principal roda, reconfulta em paralelo somente "
+            "ERRO DE CONSULTA e DOCUMENTO INVÁLIDO. Os resultados revisados "
+            "entram na tabela quando as duas consultas terminam. Atenção: "
+            "usa a mesma sessão do site; se der erro, para automaticamente."
         )
         execucao_layout.addWidget(self.campo_revisar_paralelo)
         self.campo_revisar_paralelo.toggled.connect(
@@ -5780,9 +5781,9 @@ class MainWindow(QMainWindow):
         nomes_por_cpf: dict[str, str] = {}
         if continuar:
             # A consulta foi interrompida: rever o que não tem resultado E
-            # os itens pendentes (erros, NAO VERIFICADO e, sobretudo,
-            # 'Sem débitos (NÃO CONFIRMADO)'). Se a própria revisão foi
-            # interrompida, continuar pelo que faltou nesta rodada.
+            # os itens pendentes (ERRO DE CONSULTA / DOCUMENTO INVÁLIDO).
+            # Se a própria revisão foi interrompida, continuar pelo que
+            # faltou nesta rodada.
             if self._registros_revisao:
                 base = self._registros_revisao
                 concluidos = self._revisao_concluida
