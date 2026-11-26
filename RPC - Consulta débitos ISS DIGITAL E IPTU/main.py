@@ -552,12 +552,17 @@ def _chave_ordem_competencia(item: dict) -> tuple[int, int]:
 
 
 def _ordenar_resultados(resultados: list[dict]) -> list[dict]:
-    """Contribuintes em ordem alfabética; débitos do mais velho ao final."""
+    """Contribuintes em ordem alfabética; débitos do mais novo ao mais velho.
+
+    Esta é a ordem dos RELATÓRIOS gravados. Na tela da consulta a ordem é
+    cronológica (competência final por último), aplicada ao preencher a
+    tabela — sem alterar o arquivo salvo.
+    """
     return sorted(
         resultados,
         key=lambda item: (
             _sem_acento(str(item.get("Nome", "") or "")).strip().lower(),
-            _chave_ordem_competencia(item),
+            -_ano_debito(item),
             int(item.get("_indice") or 0),
             str(item.get("CPF", "") or ""),
         ),
@@ -698,10 +703,10 @@ def mapa_observacoes(linhas: list[dict]) -> dict[str, list[str]]:
         competencia = str(item.get("Competência", "") or "").strip()
         mapa.setdefault(documento, OrderedDict())[
             f"{tipo} – {competencia}"
-        ] = _chave_ordem_competencia({"Competência": competencia})
+        ] = _ano_debito(item)
     return {
         doc: [texto for texto, _ in sorted(
-            pares.items(), key=lambda par: (par[1], par[0])
+            pares.items(), key=lambda par: (-par[1], par[0])
         )]
         for doc, pares in mapa.items()
     }
@@ -3650,8 +3655,7 @@ class MainWindow(QMainWindow):
             return 0
         self.resultados = _ordenar_resultados(itens)
         self.tabela_resultados.setRowCount(0)
-        for item in self.resultados:
-            self._inserir_linha_tabela(item)
+        self._preencher_tabela_resultados()
         self.botao_salvar.setEnabled(True)
         self._atualizar_painel_resultados()
         self._log(
@@ -3718,8 +3722,7 @@ class MainWindow(QMainWindow):
         ]
         self.resultados = _ordenar_resultados(list(self.resultados) + novos)
         self.tabela_resultados.setRowCount(0)
-        for item in self.resultados:
-            self._inserir_linha_tabela(item)
+        self._preencher_tabela_resultados()
         processados = int(progresso.get("processados") or 0)
         if self.registros:
             self.barra_progresso.setValue(
@@ -4967,8 +4970,7 @@ class MainWindow(QMainWindow):
         self.resultados = list(resultados_iniciais)
         self._cores_nomes = {}
         self.tabela_resultados.setRowCount(0)
-        for item in self.resultados:
-            self._inserir_linha_tabela(item)
+        self._preencher_tabela_resultados()
         self.barra_progresso.setValue(
             int(indice_inicial * 100 / len(self.registros)) if self.registros else 0
         )
@@ -5064,6 +5066,15 @@ class MainWindow(QMainWindow):
             if rotulo:
                 mensagem += f": {rotulo}"
         self.label_revisao_paralela.setText(f"Revisão paralela: {mensagem}")
+
+    def _preencher_tabela_resultados(self) -> None:
+        """Tela da consulta: ordem cronológica, competência final por último.
+
+        O relatório salvo continua com os débitos mais novos primeiro.
+        """
+        self.tabela_resultados.setRowCount(0)
+        for item in sorted(self.resultados, key=_chave_ordem_competencia):
+            self._inserir_linha_tabela(item)
 
     def _inserir_linha_tabela(self, item: dict) -> None:
         """Insere um item na tabela sem alterar a lista ``resultados``.
@@ -5506,8 +5517,7 @@ class MainWindow(QMainWindow):
         # Reordena pela planilha e reconstrói a tabela na ordem correta.
         self.resultados = _ordenar_resultados(self.resultados)
         self.tabela_resultados.setRowCount(0)
-        for item in self.resultados:
-            self._inserir_linha_tabela(item)
+        self._preencher_tabela_resultados()
         # Persiste a mesclagem: os documentos revisados ficam de fora da
         # consulta principal e, sem isso, sumiriam do progresso ao reabrir.
         if self.caminho_entrada:
@@ -5680,8 +5690,7 @@ class MainWindow(QMainWindow):
         if progresso:
             self.resultados = _ordenar_resultados(resultados_iniciais)
             self.tabela_resultados.setRowCount(0)
-            for item in self.resultados:
-                self._inserir_linha_tabela(item)
+            self._preencher_tabela_resultados()
             self._atualizar_painel_resultados()
         if len(documentos) != antes:
             self._log(

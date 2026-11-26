@@ -163,13 +163,13 @@ def carregar_debitos(caminho: Path) -> dict[str, list[str]]:
                 continue
             debitos.setdefault(doc, OrderedDict())[
                 tipo + SEPARADOR + comp
-            ] = chave_ordem_competencia(comp)
+            ] = ano_debito(comp)
     finally:
         wb.close()
 
     return {
         doc: [texto for texto, _ in sorted(
-            pares.items(), key=lambda par: (par[1], par[0])
+            pares.items(), key=lambda par: (-par[1], par[0])
         )]
         for doc, pares in debitos.items()
     }
