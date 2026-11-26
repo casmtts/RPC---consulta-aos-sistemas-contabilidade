@@ -463,18 +463,36 @@ def classificar_debitos(esperados: list[dict], encontrados: list[dict],
     """
     resultados: list[dict] = []
     usados: set[int] = set()
+
+    # Índices pré-construídos: sem eles cada débito esperado percorria toda a
+    # lista encontrada duas vezes (O(n²) em milhares de débitos).
+    from collections import defaultdict
+
+    indice_tipo_comp: dict[tuple[str, tuple[int, int]], list[tuple[int, dict]]] = (
+        defaultdict(list)
+    )
+    indice_id: dict[str, list[tuple[int, dict]]] = defaultdict(list)
+    for indice, candidato in enumerate(encontrados):
+        chave = (
+            chave_tipo(candidato.get("tipo_debito", "")),
+            chave_competencia(candidato.get("competencia", "")),
+        )
+        indice_tipo_comp[chave].append((indice, candidato))
+        indice_id[str(candidato.get("id_divida", "") or "").strip()].append(
+            (indice, candidato)
+        )
+
     for esperado in esperados:
         # Com dados migrados, tipo/competência não identificam a dívida com
         # segurança. Prioriza-se o ID Dívida; depois CIF + competência; e só
         # por fim tipo + competência (com conferência de mês).
+        chave_esperada = (
+            chave_tipo(esperado["tipo"]),
+            chave_competencia(esperado["competencia"]),
+        )
         vagos = [
-            (i, c) for i, c in enumerate(encontrados)
+            (i, c) for i, c in indice_tipo_comp.get(chave_esperada, [])
             if i not in usados
-            and chave_tipo(c.get("tipo_debito", ""))
-            == chave_tipo(esperado["tipo"])
-            and competencia_equivalente(
-                c.get("competencia", ""), esperado["competencia"]
-            )
         ]
         id_divida = str(esperado.get("id_divida", "") or "").strip()
         cif = str(esperado.get("cif", "") or "").strip()
@@ -482,9 +500,8 @@ def classificar_debitos(esperados: list[dict], encontrados: list[dict],
         criterio = "Nenhum"
         if id_divida and id_divida not in ("-", "0"):
             exatos = [
-                (i, c) for i, c in enumerate(encontrados)
+                (i, c) for i, c in indice_id.get(id_divida, [])
                 if i not in usados
-                and str(c.get("id_divida", "") or "").strip() == id_divida
             ]
             if exatos:
                 candidatos, criterio = exatos[:1], "ID Dívida"

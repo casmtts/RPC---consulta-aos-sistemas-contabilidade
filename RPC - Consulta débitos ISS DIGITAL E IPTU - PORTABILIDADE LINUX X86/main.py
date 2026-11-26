@@ -145,6 +145,7 @@ _MARCA_REVISAO = Qt.ItemDataRole.UserRole + 20
 # A tela de Resultados mostra no maximo este numero de linhas: manter um
 # QTableWidgetItem por debito (dezenas de milhares) consumia gigabytes de RAM.
 MAX_LINHAS_TABELA = 3000
+MAX_LINHAS_PREVIA = 5000  # prévia da planilha de entrada (não limita o processamento)
 # O progresso e reescrito no maximo a cada poucos segundos (o arquivo chega
 # a dezenas de MB); o sinalizador em_andamento garante a retomagem segura.
 INTERVALO_SALVAMENTO_PROGRESSO = 2.0
@@ -4445,6 +4446,11 @@ class MainWindow(QMainWindow):
         if self.worker is not None and self.worker.isRunning():
             return  # o worker já renova o token durante a consulta
         cookie_atual = self.campo_cookie.text()
+        # Ler cookies do Brave envolve keyring/sqlite e pode travar a GUI por
+        # segundos. Só faz isso quando o token está perto de vencer.
+        restante = segundos_para_expirar(cookie_atual)
+        if restante is not None and restante > 3600:
+            return
         cookie, sessao = _renovar_token(cookie_atual, self.cookie_sessao)
         if cookie != cookie_atual or sessao != self.cookie_sessao:
             self.campo_cookie.setText(cookie)
@@ -4947,7 +4953,15 @@ class MainWindow(QMainWindow):
         _configurar_tabela(
             tabela, colunas, zebra=True, scroll_sempre=True, numerar=True
         )
-        for linha in registros:
+        # Evita montar dezenas de milhares de células na thread da GUI; os
+        # registros continuam todos disponíveis para a consulta.
+        exibidas = registros[:MAX_LINHAS_PREVIA]
+        if len(registros) > len(exibidas):
+            self._log(
+                f"Prévia mostra {len(exibidas)} de {len(registros)} linhas; "
+                "todas serão processadas."
+            )
+        for linha in exibidas:
             posicao = tabela.rowCount()
             tabela.insertRow(posicao)
             tabela.setRowHeight(posicao, 30)
