@@ -5857,6 +5857,30 @@ class MainWindow(QMainWindow):
         )
         return _arquivo_progresso_revisao_completa(self.caminho_entrada, aba)
 
+    def _log_nomes_revisao(self, registros: list[dict], titulo: str) -> None:
+        """Mostra no log e no tooltip quais nomes foram selecionados."""
+        nomes: list[str] = []
+        vistos: set[str] = set()
+        for registro in registros:
+            documento = self._documento_registro(registro)
+            nome = str(registro.get("Nome") or _campo(registro, "nome") or "").strip()
+            rotulo = nome or documento
+            if not rotulo or rotulo in vistos:
+                continue
+            vistos.add(rotulo)
+            nomes.append(rotulo)
+        if not nomes:
+            return
+        amostra = "; ".join(nomes[:20])
+        if len(nomes) > 20:
+            amostra += f" ... (+{len(nomes) - 20})"
+        self._log(f"{titulo}: {len(nomes)} nome(s) selecionado(s): {amostra}")
+        etiqueta = getattr(self, "label_revisao_paralela", None)
+        if etiqueta is not None:
+            etiqueta.setToolTip(
+                f"{titulo} ({len(nomes)} nomes):\n" + "\n".join(nomes[:300])
+            )
+
     def _iniciar_revisao_observacoes(
             self, registros: list[dict], incluir_pagos: bool = True,
             arquivo_progresso: Path | None = None, indice_inicial: int = 0,
@@ -5864,6 +5888,7 @@ class MainWindow(QMainWindow):
         """Lança a consulta dos CPFs que ficaram com OBSERVAÇÃO vazia."""
         self._avisar_se_http()
         self._registros_revisao = list(registros)
+        self._log_nomes_revisao(registros, "Revisão selecionada")
         self._carregar_cookie_brave(silent=True)
         self.barra_progresso.setValue(0)
         self.label_status.setText("Revisando observações vazias...")
@@ -6120,6 +6145,7 @@ class MainWindow(QMainWindow):
 
         # Guarda a seleção: se parar de novo, Revisar continua exatamente daqui.
         self._registros_revisao = list(registros)
+        self._log_nomes_revisao(registros, "Revisão selecionada")
         # A faixa acompanha apenas o documento em consulta, via sinal do worker.
 
         self._carregar_cookie_brave(silent=True)
