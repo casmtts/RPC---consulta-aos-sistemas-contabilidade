@@ -3911,8 +3911,8 @@ class MainWindow(QMainWindow):
         if hasattr(self, "botao_revisao_completa"):
             self.botao_revisao_completa.setEnabled(False)
         self.botao_revisar.setToolTip(
-            "Reconsulta somente ERRO DE CONSULTA e linhas que ficaram sem "
-            "resultado. DOCUMENTO INVÁLIDO e débitos já confirmados não voltam. "
+            "Reconsulta ERRO DE CONSULTA, DOCUMENTO INVÁLIDO e linhas que "
+            "ficaram sem resultado. Débitos já confirmados não voltam. "
             "Para reconstruir tudo, use 'Revisão completa'."
         )
         self.botao_revisar.clicked.connect(self.revisar)
@@ -5060,15 +5060,14 @@ class MainWindow(QMainWindow):
 
     @staticmethod
     def _precisa_revisao(item: dict) -> bool:
-        """Somente ERRO DE CONSULTA volta no botão Revisar.
+        """ERRO DE CONSULTA e DOCUMENTO INVÁLIDO voltam no botão Revisar.
 
-        DOCUMENTO INVÁLIDO não adianta reconstruir (o site não aceita o CPF),
-        INDETERMINADO sem erro é dado migrado já analisado e VERIFICADO com
-        campo em branco é tratado pela Revisão completa. A reconstrução de
-        tudo é feita pelo botão próprio, não por Revisar.
+        Os demais (INDETERMINADO sem erro, VERIFICADO com campo em branco,
+        Sem débitos etc.) ficam de fora; a reconstrução de tudo é feita pela
+        Revisão completa.
         """
         status = str(item.get("Status", "")).strip().upper()
-        return status == STATUS_ERRO_CONSULTA
+        return status in (STATUS_ERRO_CONSULTA, "DOCUMENTO INVÁLIDO")
 
     @staticmethod
     def _pincel_em_revisao() -> QBrush:
@@ -5554,14 +5553,6 @@ class MainWindow(QMainWindow):
             self._iniciar_revisao_observacoes(pendentes, incluir_pagos=True)
             return
 
-        # Documento inválido nunca volta: o site não aceita esse CPF/CNPJ,
-        # refazer a consulta só gastaria tempo e geraria outro erro.
-        invalidos = {
-            str(r.get("CPF", "")).strip()
-            for r in self.resultados
-            if str(r.get("Status", "")).strip().upper() == "DOCUMENTO INVÁLIDO"
-        } - {""}
-
         continuar = self._consulta_interrompida
         self._consulta_interrompida = False
         if not continuar:
@@ -5585,11 +5576,11 @@ class MainWindow(QMainWindow):
                     if self._precisa_revisao(item)
                 }
                 pendentes.discard("")
-                concluidos = ({
+                concluidos = {
                     str(r.get("CPF", "")).strip()
                     for r in self.resultados
                     if str(r.get("CPF", "")).strip()
-                } - pendentes) | invalidos
+                } - pendentes
             registros = [
                 dict(r, _indice_original=int(_campo(r, "_indice_original") or i))
                 for i, r in enumerate(base, start=1)
@@ -5608,7 +5599,6 @@ class MainWindow(QMainWindow):
                 if self._precisa_revisao(r)
             }
             documentos.discard("")
-            documentos -= invalidos
 
             # Inclui também os registros que ficaram sem resultado após uma
             # parada (ou que nunca chegaram a ser consultados).
