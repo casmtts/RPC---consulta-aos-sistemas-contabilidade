@@ -3995,7 +3995,12 @@ class MainWindow(QMainWindow):
         self.campo_segundo_plano = QCheckBox(
             "Segundo plano (não trazer o navegador para a frente)"
         )
-        self.campo_segundo_plano.setChecked(False)
+        self.campo_segundo_plano.setChecked(
+            self._config.value("segundo_plano", False, type=bool)
+        )
+        self.campo_segundo_plano.toggled.connect(
+            lambda ativo: self._config.setValue("segundo_plano", ativo)
+        )
         self.campo_segundo_plano.setToolTip(
             "Quando ativado, a consulta usa um Chromium invisível com os "
             "mesmos cookies do navegador, em vez de abrir uma aba no Brave. "
