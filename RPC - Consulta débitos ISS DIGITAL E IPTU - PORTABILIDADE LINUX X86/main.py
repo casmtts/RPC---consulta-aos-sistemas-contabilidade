@@ -4965,9 +4965,12 @@ class MainWindow(QMainWindow):
             posicao = tabela.rowCount()
             tabela.insertRow(posicao)
             tabela.setRowHeight(posicao, 30)
-            numero = QTableWidgetItem(
-                str(int(linha.get("_indice_original") or posicao + 1))
-            )
+            numero = QTableWidgetItem(str(posicao + 1))
+            indice_original = int(linha.get("_indice_original") or 0)
+            if indice_original:
+                numero.setToolTip(
+                    f"Linha original da planilha: {indice_original}"
+                )
             numero.setTextAlignment(
                 Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignVCenter
             )
@@ -5347,9 +5350,12 @@ class MainWindow(QMainWindow):
             posicao = self.tabela_resultados.rowCount()
         self.tabela_resultados.insertRow(posicao)
         self.tabela_resultados.setRowHeight(posicao, 30)
-        numero = QTableWidgetItem(
-            str(int(item.get("_indice") or posicao + 1))
-        )
+        # Número sequencial da tabela (1, 2, 3...). O índice original da
+        # planilha fica no tooltip para rastrear a linha de origem.
+        numero = QTableWidgetItem(str(posicao + 1))
+        indice_original = int(item.get("_indice") or 0)
+        if indice_original:
+            numero.setToolTip(f"Linha original da planilha: {indice_original}")
         numero.setTextAlignment(
             Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignVCenter
         )
