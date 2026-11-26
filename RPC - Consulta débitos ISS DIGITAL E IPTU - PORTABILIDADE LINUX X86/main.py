@@ -3036,6 +3036,37 @@ def _estilo_aplicacao() -> str:
         QScrollBar::add-page:horizontal, QScrollBar::sub-page:horizontal {{ background: transparent; }}
         QStatusBar {{ background: {p["status_fundo"]}; color: {p["status_texto"]}; }}
         QCheckBox {{ color: {p["texto"]}; }}
+        /* Listas suspensas, menús, indicadores e cantos das tabelas também
+           herdavam o fundo claro nativo no tema escuro. */
+        QComboBox QAbstractItemView, QListView, QTreeView {{
+            background: {p["campo_fundo"]};
+            color: {p["texto"]};
+            border: 1px solid {p["borda"]};
+            selection-background-color: {p["selecao"]};
+            selection-color: {p["texto"]};
+        }}
+        QMenu {{ background: {p["painel"]}; color: {p["texto"]}; border: 1px solid {p["borda"]}; }}
+        QMenu::item:selected {{ background: {p["selecao"]}; color: {p["texto"]}; }}
+        QDialog {{ background: {p["painel"]}; color: {p["texto"]}; }}
+        QCheckBox::indicator, QRadioButton::indicator {{
+            background: {p["campo_fundo"]};
+            border: 1px solid {p["borda"]};
+            border-radius: 3px;
+            width: 14px;
+            height: 14px;
+        }}
+        QCheckBox::indicator:checked, QRadioButton::indicator:checked {{
+            background: {p["realce"]};
+            border: 1px solid {p["realce"]};
+        }}
+        QTableCornerButton::section {{
+            background: {p["aba_fundo"]};
+            border: 1px solid {p["borda"]};
+        }}
+        QAbstractSpinBox::up-button, QAbstractSpinBox::down-button {{
+            background: {p["aba_fundo"]};
+            border: none;
+        }}
     """
 
 
