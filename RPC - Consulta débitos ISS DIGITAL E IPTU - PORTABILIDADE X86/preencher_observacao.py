@@ -88,6 +88,34 @@ def ano_debito(competencia: str) -> int:
     return 2000 + int(match.group(1)) if match else 0
 
 
+_MESES = {
+    "jan": 1, "fev": 2, "mar": 3, "abr": 4, "mai": 5, "jun": 6,
+    "jul": 7, "ago": 8, "set": 9, "out": 10, "nov": 11, "dez": 12,
+}
+
+
+def chave_ordem_competencia(texto: str) -> tuple[int, int]:
+    """(ano, mês) para ordenar débitos; competência final fica por último."""
+    valor = str(texto or "").lower()
+    mes = None
+    nome = re.search(
+        r"\b(jan|fev|mar|abr|mai|jun|jul|ago|set|out|nov|dez)\b", valor
+    )
+    numerico = re.search(r"\b(\d{1,2})\s*[/\-]\s*(\d{2}|\d{4})\b", valor)
+    if nome:
+        mes = _MESES[nome.group(1)]
+        ano = re.search(r"\b(\d{2}|\d{4})\b", valor[nome.end():])
+    elif numerico:
+        mes = int(numerico.group(1))
+        ano = re.search(r"\d{2}|\d{4}", numerico.group(2))
+    else:
+        ano = re.search(r"\b(20\d{2})\b", valor)
+    ano = int(ano.group(0)) if ano else 0
+    if ano and ano < 100:
+        ano += 2000
+    return (ano, mes if mes else 13)
+
+
 def carregar_debitos(caminho: Path) -> dict[str, list[str]]:
     """Lê a planilha de débitos e devolve {CPF/CNPJ: [tipo – competência]}."""
     wb = load_workbook(caminho, read_only=True, data_only=True)
@@ -135,13 +163,13 @@ def carregar_debitos(caminho: Path) -> dict[str, list[str]]:
                 continue
             debitos.setdefault(doc, OrderedDict())[
                 tipo + SEPARADOR + comp
-            ] = ano_debito(comp)
+            ] = chave_ordem_competencia(comp)
     finally:
         wb.close()
 
     return {
         doc: [texto for texto, _ in sorted(
-            pares.items(), key=lambda par: (-par[1], par[0])
+            pares.items(), key=lambda par: (par[1], par[0])
         )]
         for doc, pares in debitos.items()
     }

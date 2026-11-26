@@ -542,13 +542,23 @@ def _ano_debito(item: dict) -> int:
     return int(match.group(0)) if match else 0
 
 
+def _chave_ordem_competencia(item: dict) -> tuple[int, int]:
+    """Ordem cronológica da competência; a final fica SEMPRE por último.
+
+    Competência só com ano ('2026') recebe mês 13, para vir depois de
+    '1/2026' etc. dentro do mesmo ano.
+    """
+    ano, mes = chave_competencia(item.get("Competência", ""))
+    return (ano, mes if mes else 13)
+
+
 def _ordenar_resultados(resultados: list[dict]) -> list[dict]:
-    """Contribuintes em ordem alfabética; débitos do mais novo ao mais velho."""
+    """Contribuintes em ordem alfabética; débitos do mais velho ao final."""
     return sorted(
         resultados,
         key=lambda item: (
             _sem_acento(str(item.get("Nome", "") or "")).strip().lower(),
-            -_ano_debito(item),
+            _chave_ordem_competencia(item),
             int(item.get("_indice") or 0),
             str(item.get("CPF", "") or ""),
         ),
@@ -689,10 +699,10 @@ def mapa_observacoes(linhas: list[dict]) -> dict[str, list[str]]:
         competencia = str(item.get("Competência", "") or "").strip()
         mapa.setdefault(documento, OrderedDict())[
             f"{tipo} – {competencia}"
-        ] = _ano_debito(item)
+        ] = _chave_ordem_competencia({"Competência": competencia})
     return {
         doc: [texto for texto, _ in sorted(
-            pares.items(), key=lambda par: (-par[1], par[0])
+            pares.items(), key=lambda par: (par[1], par[0])
         )]
         for doc, pares in mapa.items()
     }
