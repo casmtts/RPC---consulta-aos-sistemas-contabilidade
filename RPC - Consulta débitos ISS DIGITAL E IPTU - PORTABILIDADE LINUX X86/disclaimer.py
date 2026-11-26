@@ -6,6 +6,7 @@ sem alterar as abas de dados nem os cabeçalhos usados pelo programa.
 
 from __future__ import annotations
 
+import re
 import textwrap
 from datetime import datetime
 
@@ -121,14 +122,22 @@ def adicionar_aviso(wb) -> None:
             ws.row_dimensions[linha].height = 9
             linha += 1
             continue
-        for parte in textwrap.wrap(
-            texto, width=95, break_long_words=True, break_on_hyphens=False
-        ):
-            celula = ws.cell(row=linha, column=1, value=parte)
-            celula.font = Font(size=11)
-            celula.alignment = Alignment(vertical="center", wrap_text=False)
-            ws.row_dimensions[linha].height = 16
-            linha += 1
+        # Títulos de seção ("1. FONTE DOS DADOS —", "4. ATUALIDADE —"...)
+        # ficam em negrito; o texto corrido permanece normal.
+        secao = re.match(r"^(\d+\.\s.*?\s—\s)(.*)$", texto)
+        segmentos = (
+            [(secao.group(1), True), (secao.group(2), False)]
+            if secao else [(texto, False)]
+        )
+        for trecho, negrito in segmentos:
+            for parte in textwrap.wrap(
+                trecho, width=95, break_long_words=True, break_on_hyphens=False
+            ):
+                celula = ws.cell(row=linha, column=1, value=parte)
+                celula.font = Font(size=11, bold=negrito)
+                celula.alignment = Alignment(vertical="center", wrap_text=False)
+                ws.row_dimensions[linha].height = 16
+                linha += 1
 
     ws.row_dimensions[linha].height = 9
     linha += 1
