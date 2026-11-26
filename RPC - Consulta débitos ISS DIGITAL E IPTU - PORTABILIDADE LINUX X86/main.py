@@ -3911,9 +3911,9 @@ class MainWindow(QMainWindow):
         if hasattr(self, "botao_revisao_completa"):
             self.botao_revisao_completa.setEnabled(False)
         self.botao_revisar.setToolTip(
-            "Após parar: consulta somente o que ficou faltando. "
-            "Depois de concluído: reconulta erros, NAO VERIFICADO, "
-            "'Sem débitos' e linhas com CIF, ID Dívida ou Vencimento em branco"
+            "Reconsulta somente ERRO DE CONSULTA e linhas que ficaram sem "
+            "resultado. DOCUMENTO INVÁLIDO e débitos já confirmados não voltam. "
+            "Para reconstruir tudo, use 'Revisão completa'."
         )
         self.botao_revisar.clicked.connect(self.revisar)
         linha_resultados.addWidget(self.botao_revisar)
@@ -5060,31 +5060,15 @@ class MainWindow(QMainWindow):
 
     @staticmethod
     def _precisa_revisao(item: dict) -> bool:
-        """Revisa erros, sem débitos e linhas com campos novos em branco.
+        """Somente ERRO DE CONSULTA volta no botão Revisar.
 
-        Linhas antigas podem ter vindo sem CIF (número do lote do IPTU), sem
-        ID Dívida ou sem Vencimento. Elas voltam para a consulta a fim de
-        preencher esses campos.
+        DOCUMENTO INVÁLIDO não adianta reconstruir (o site não aceita o CPF),
+        INDETERMINADO sem erro é dado migrado já analisado e VERIFICADO com
+        campo em branco é tratado pela Revisão completa. A reconstrução de
+        tudo é feita pelo botão próprio, não por Revisar.
         """
         status = str(item.get("Status", "")).strip().upper()
-        # Documento inválido e snapshot legado não voltam para a revisão:
-        # refazer a consulta não adianta (o site não aceita um e o outro
-        # depende de fonte externa, não da sessão atual).
-        # Indeterminado com Erro é falha de consulta: merece nova tentativa.
-        # Indeterminado sem Erro é dado migrado analisado, sem reconsulta útil.
-        if status == STATUS_PENDENTE:
-            return bool(str(item.get("Erro", "") or "").strip())
-        if status == "DOCUMENTO INVÁLIDO":
-            return False
-        if status not in ("OK", "VERIFICADO"):
-            return True
-        descricao = _sem_acento(item.get("Tipo de Débito", ""))
-        if "sem debito" in descricao:
-            return True
-        return any(
-            str(item.get(campo, "")).strip() in ("", "-")
-            for campo in ("CIF", "ID Dívida", "Vencimento")
-        )
+        return status == STATUS_ERRO_CONSULTA
 
     @staticmethod
     def _pincel_em_revisao() -> QBrush:
@@ -5498,17 +5482,15 @@ class MainWindow(QMainWindow):
         progresso = ler_progresso(arquivo) if arquivo and arquivo.exists() else None
         if progresso:
             resultados_iniciais = list(progresso.get("resultados") or [])
-        # Só já foi conferido quem tem resultado confirmado. Usa o progresso
-        # da revisão completa e, se ele não existir, os resultados já
-        # carregados do progresso principal (execuções feitas antes desta
-        # versão). Documentos que falharam voltam para a fila.
-        base_resultados = resultados_iniciais or self.resultados
+        # "Completa" significa TODOS os documentos. Só o progresso da própria
+        # revisão completa pode reduzir a fila (retomada após interrupção);
+        # resultados da consulta normal não dispensam ninguém aqui.
         concluidos = {
             re.sub(r"\D", "", str(item.get("CPF", "")))
-            for item in base_resultados
+            for item in resultados_iniciais
             if str(item.get("Status", "")).strip().upper()
             in ("OK", "VERIFICADO")
-        }
+        } if progresso else set()
         antes = len(documentos)
         documentos = [
             registro for registro in documentos
@@ -5572,6 +5554,14 @@ class MainWindow(QMainWindow):
             self._iniciar_revisao_observacoes(pendentes, incluir_pagos=True)
             return
 
+        # Documento inválido nunca volta: o site não aceita esse CPF/CNPJ,
+        # refazer a consulta só gastaria tempo e geraria outro erro.
+        invalidos = {
+            str(r.get("CPF", "")).strip()
+            for r in self.resultados
+            if str(r.get("Status", "")).strip().upper() == "DOCUMENTO INVÁLIDO"
+        } - {""}
+
         continuar = self._consulta_interrompida
         self._consulta_interrompida = False
         if not continuar:
@@ -5595,11 +5585,11 @@ class MainWindow(QMainWindow):
                     if self._precisa_revisao(item)
                 }
                 pendentes.discard("")
-                concluidos = {
+                concluidos = ({
                     str(r.get("CPF", "")).strip()
                     for r in self.resultados
                     if str(r.get("CPF", "")).strip()
-                } - pendentes
+                } - pendentes) | invalidos
             registros = [
                 dict(r, _indice_original=int(_campo(r, "_indice_original") or i))
                 for i, r in enumerate(base, start=1)
@@ -5618,6 +5608,7 @@ class MainWindow(QMainWindow):
                 if self._precisa_revisao(r)
             }
             documentos.discard("")
+            documentos -= invalidos
 
             # Inclui também os registros que ficaram sem resultado após uma
             # parada (ou que nunca chegaram a ser consultados).
