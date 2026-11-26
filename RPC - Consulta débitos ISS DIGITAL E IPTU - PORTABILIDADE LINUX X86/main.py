@@ -1836,7 +1836,7 @@ def consultar_debito(
             # indisponível após o AJAX: nesse caso o retorno é None.
             documento_confirmado = _verificar_pesquisa(
                 pagina, cpf, seletor_documento, tipo_pessoa,
-                incluir_pagos=incluir_pagos, segundo_plano=segundo_plano,
+                incluir_pagos=incluir_pagos,
             )
 
             tem_tabela, tem_dados, sem_registros = _estado_resultado(pagina)
@@ -3137,15 +3137,17 @@ class MainWindow(QMainWindow):
         self._timer_token.start()
 
         # Copia automaticamente os relatórios gerados para a pasta
-        # compartilhada do VirtualBox (departamento d.a), por departamento.
+        # compartilhada do VirtualBox (departamento d.a). Pode ser desligado
+        # para apagar arquivos lá sem que o programa os recrie.
         self._aviso_compartilhamento = False
         self._timer_compartilhamento = QTimer(self)
         self._timer_compartilhamento.setInterval(5000)
         self._timer_compartilhamento.timeout.connect(
             self._sincronizar_compartilhamento
         )
-        self._timer_compartilhamento.start()
-        QTimer.singleShot(1500, self._sincronizar_compartilhamento)
+        if self.campo_auto_compartilhamento.isChecked():
+            self._timer_compartilhamento.start()
+            QTimer.singleShot(1500, self._sincronizar_compartilhamento)
 
         self._log('Aplicação iniciada. Dica: pressione "ESC" 2x para parar as consultas.')
 
@@ -3154,8 +3156,26 @@ class MainWindow(QMainWindow):
         self.botao_reabrir.setEnabled(bool(self._config.value("ultima_planilha", "")))
         self.reabrir_ultima_planilha(silent=True)
 
+    def _alternar_auto_compartilhamento(self, ativo: bool) -> None:
+        """Liga/desliga a cópia automática a cada 5 segundos."""
+        self._config.setValue("auto_compartilhamento", ativo)
+        timer = getattr(self, "_timer_compartilhamento", None)
+        if timer is not None:
+            if ativo:
+                if not timer.isActive():
+                    timer.start()
+                    self._sincronizar_compartilhamento()
+            else:
+                timer.stop()
+        self._log(
+            "Cópia automática para a compartilhada "
+            + ("ativada." if ativo else "desativada.")
+        )
+
     def _sincronizar_compartilhamento(self, manual: bool = False) -> None:
         """Copia os relatórios para a pasta 'departamento d.a' (VirtualBox)."""
+        if not manual and not self.campo_auto_compartilhamento.isChecked():
+            return
         copias, erro = sincronizar_relatorios(_pasta_relatorios())
         if copias:
             mensagem = (
@@ -4144,6 +4164,22 @@ class MainWindow(QMainWindow):
                       self.botao_atualizar_cookies):
             linha_brave.addWidget(botao)
         ambiente_layout.addLayout(linha_brave)
+
+        self.campo_auto_compartilhamento = QCheckBox(
+            "Copiar automaticamente para a pasta compartilhada"
+        )
+        self.campo_auto_compartilhamento.setChecked(
+            self._config.value("auto_compartilhamento", True, type=bool)
+        )
+        self.campo_auto_compartilhamento.setToolTip(
+            "Desmarque para apagar arquivos da pasta compartilhada sem que "
+            "o programa os recrie automaticamente. O botão abaixo continua "
+            "copiando manualmente quando você quiser."
+        )
+        self.campo_auto_compartilhamento.toggled.connect(
+            self._alternar_auto_compartilhamento
+        )
+        ambiente_layout.addWidget(self.campo_auto_compartilhamento)
 
         self.botao_compartilhamento = QPushButton(
             "Copiar relatórios ao compartilhamento"

@@ -1835,7 +1835,7 @@ def consultar_debito(
             # indisponível após o AJAX: nesse caso o retorno é None.
             documento_confirmado = _verificar_pesquisa(
                 pagina, cpf, seletor_documento, tipo_pessoa,
-                incluir_pagos=incluir_pagos, segundo_plano=segundo_plano,
+                incluir_pagos=incluir_pagos,
             )
 
             tem_tabela, tem_dados, sem_registros = _estado_resultado(pagina)
