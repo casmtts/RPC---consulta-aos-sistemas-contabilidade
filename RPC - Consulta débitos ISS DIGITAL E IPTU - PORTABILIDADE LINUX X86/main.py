@@ -14,6 +14,7 @@ import shutil
 import subprocess
 import sys
 import threading
+import time
 import unicodedata
 from datetime import datetime
 from pathlib import Path
@@ -486,9 +487,20 @@ def salvar_progresso(caminho: Path, processados: int, total: int,
         "atualizado": datetime.now().isoformat(timespec="seconds"),
     }
     try:
-        caminho.write_text(
-            json.dumps(dados, ensure_ascii=False, indent=2), encoding="utf-8"
+        import os
+
+        # Escrita atômica e compacta: o progresso contém CPF/nome/CIF/valores,
+        # então fica com permissão restrita e sem desperdiçar espaço.
+        temporario = caminho.with_name(caminho.name + ".tmp")
+        temporario.write_text(
+            json.dumps(dados, ensure_ascii=False, separators=(",", ":")),
+            encoding="utf-8",
         )
+        try:
+            temporario.chmod(0o600)
+        except OSError:
+            pass
+        os.replace(temporario, caminho)
     except Exception:  # noqa: BLE001
         pass
 
@@ -2054,6 +2066,11 @@ def consultar_com_plano_b(
 # Worker (processamento em segundo plano)
 # ============================================================
 
+# Gravações de progresso a cada N documentos (a lista de resultados é
+# reescrita por inteiro; fazer isso a cada linha é caro em 4.000+ registros).
+SALVAR_PROGRESSO_A_CADA = 10
+
+
 class ConsultaWorker(QThread):
     progresso = pyqtSignal(int, str)
     aviso = pyqtSignal(str)
@@ -2415,7 +2432,13 @@ class ConsultaWorker(QThread):
             # Avisa no arquivo de progresso que esta consulta COMEÇOU mas ainda
             # não terminou. Se o programa for fechado agora, a retomada refaz
             # este registro em vez de considerá-lo concluído.
-            if self.arquivo_progresso is not None:
+            # Reescrever a lista inteira de resultados a cada documento é
+            # caro em planilhas grandes; grava de 10 em 10 (a gravação final
+            # é sempre forçada no fim da rodada).
+            if (
+                self.arquivo_progresso is not None
+                and indice_real % SALVAR_PROGRESSO_A_CADA == 1
+            ):
                 salvar_progresso(
                     self.arquivo_progresso, indice_real - 1, total, self.resultados,
                     em_andamento=True, indice_atual=indice_real,
@@ -2670,7 +2693,10 @@ class ConsultaWorker(QThread):
                     break
 
             processados = indice_real
-            if self.arquivo_progresso is not None:
+            if (
+                self.arquivo_progresso is not None
+                and indice_real % SALVAR_PROGRESSO_A_CADA == 0
+            ):
                 salvar_progresso(
                     self.arquivo_progresso, indice_real, total, self.resultados,
                     em_andamento=False, indice_atual=indice_real,
@@ -3063,9 +3089,25 @@ def _estilo_aplicacao() -> str:
             background: {p["aba_fundo"]};
             border: 1px solid {p["borda"]};
         }}
-        QAbstractSpinBox::up-button, QAbstractSpinBox::down-button {{
+        QAbstractSpinBox::up-button {{
+            subcontrol-origin: border;
+            subcontrol-position: top right;
+            width: 17px;
             background: {p["aba_fundo"]};
-            border: none;
+            border: 1px solid {p["borda"]};
+            border-radius: 0 5px 0 0;
+        }}
+        QAbstractSpinBox::down-button {{
+            subcontrol-origin: border;
+            subcontrol-position: bottom right;
+            width: 17px;
+            background: {p["aba_fundo"]};
+            border: 1px solid {p["borda"]};
+            border-radius: 0 0 5px 0;
+        }}
+        QAbstractSpinBox::up-arrow, QAbstractSpinBox::down-arrow {{
+            width: 8px;
+            height: 8px;
         }}
     """
 
@@ -3997,7 +4039,8 @@ class MainWindow(QMainWindow):
         self.tabela_entrada.setMinimumHeight(200)
         self.tabela_entrada.setMaximumHeight(240)
         _configurar_tabela(
-            self.tabela_entrada, ["Coluna"], zebra=True, scroll_sempre=True
+            self.tabela_entrada, ["Coluna"], zebra=True, scroll_sempre=True,
+            numerar=True,
         )
         entrada_layout.addWidget(self.tabela_entrada)
         consulta_layout.addWidget(grupo_entrada)
@@ -4212,6 +4255,7 @@ class MainWindow(QMainWindow):
             COLUNAS_SAIDA,
             larguras=[185, 150, 225, 105, 120, 270, 90, 100, 100, 165, None],
             scroll_sempre=True,
+            numerar=True,
         )
         self.tabela_resultados.setItemDelegate(
             _DelegadoRevisao(self.tabela_resultados)
@@ -4537,7 +4581,8 @@ class MainWindow(QMainWindow):
         # Tabela de entrada (zebra é controlada pelo stylesheet da tabela).
         colunas_entrada = self.cabecalho or ["Coluna"]
         _configurar_tabela(
-            self.tabela_entrada, colunas_entrada, zebra=True, scroll_sempre=True
+            self.tabela_entrada, colunas_entrada, zebra=True, scroll_sempre=True,
+            numerar=True,
         )
         if self.cabecalho and self.registros:
             self._preencher_tabela(
@@ -4549,6 +4594,7 @@ class MainWindow(QMainWindow):
             self.tabela_resultados, COLUNAS_SAIDA,
             larguras=[185, 150, 225, 105, 120, 270, 90, 100, 100, 165, None],
             scroll_sempre=True,
+            numerar=True,
         )
         for posicao, item in enumerate(self.resultados):
             self._aplicar_estilo_linha_resultado(posicao, item)
@@ -4898,11 +4944,20 @@ class MainWindow(QMainWindow):
         self, tabela: QTableWidget, colunas: list[str], registros: list[dict]
     ) -> None:
         tabela.setRowCount(0)
-        _configurar_tabela(tabela, colunas, zebra=True, scroll_sempre=True)
+        _configurar_tabela(
+            tabela, colunas, zebra=True, scroll_sempre=True, numerar=True
+        )
         for linha in registros:
             posicao = tabela.rowCount()
             tabela.insertRow(posicao)
             tabela.setRowHeight(posicao, 30)
+            numero = QTableWidgetItem(
+                str(int(linha.get("_indice_original") or posicao + 1))
+            )
+            numero.setTextAlignment(
+                Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignVCenter
+            )
+            tabela.setVerticalHeaderItem(posicao, numero)
             for coluna, nome in enumerate(colunas):
                 celula = QTableWidgetItem(str(linha.get(nome, "")))
                 alvo = _sem_acento(nome)
@@ -5210,7 +5265,12 @@ class MainWindow(QMainWindow):
             self._log("Parada solicitada na verificação de CIFs.")
 
     def _ao_progresso(self, percentual: int, mensagem: str) -> None:
-        self._atualizar_painel_resultados()
+        # Recontar a lista inteira a cada documento custa caro em milhares
+        # de linhas: atualiza o painel no máximo uma vez por segundo.
+        agora = time.monotonic()
+        if agora - getattr(self, "_ultimo_painel_atualizado", 0.0) >= 1.0:
+            self._ultimo_painel_atualizado = agora
+            self._atualizar_painel_resultados()
         self.barra_progresso.setValue(percentual)
         self.label_status.setText(mensagem)
         self.statusBar().showMessage(mensagem)
@@ -5264,6 +5324,13 @@ class MainWindow(QMainWindow):
             posicao = self.tabela_resultados.rowCount()
         self.tabela_resultados.insertRow(posicao)
         self.tabela_resultados.setRowHeight(posicao, 30)
+        numero = QTableWidgetItem(
+            str(int(item.get("_indice") or posicao + 1))
+        )
+        numero.setTextAlignment(
+            Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignVCenter
+        )
+        self.tabela_resultados.setVerticalHeaderItem(posicao, numero)
         for coluna, nome in enumerate(COLUNAS_SAIDA):
             valor = str(item.get(nome, ""))
             if nome == "Valor (R$)":

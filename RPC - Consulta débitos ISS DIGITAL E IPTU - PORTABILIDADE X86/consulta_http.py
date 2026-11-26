@@ -258,6 +258,8 @@ def consultar_debito_http(
         _, _ = buscar(HOME_URL)
         url_final, pagina = buscar(BASE_URL)
         verificar_parada()
+    except ConsultaInterrompidaHttp:
+        raise  # o botão Parar precisa interromper de verdade
     except Exception as exc:  # noqa: BLE001
         raise ConsultaNaoVerificada(f"Falha ao acessar o site: {exc}") from exc
 
@@ -323,6 +325,8 @@ def consultar_debito_http(
     try:
         url_resposta, pagina_resposta = buscar(acao, corpo)
         verificar_parada()
+    except ConsultaInterrompidaHttp:
+        raise  # o botão Parar precisa interromper de verdade
     except Exception as exc:  # noqa: BLE001
         raise ConsultaNaoVerificada(f"Falha ao enviar a consulta: {exc}") from exc
 

@@ -37,7 +37,9 @@ echo "deb [signed-by=/usr/share/keyrings/brave-browser-archive-keyring.gpg arch=
 apt-get update -qq
 apt-get install -y -qq brave-browser
 EOF
-    $ELEVAR bash "$TMP_BRAVE" \
+    # Recebe o script via stdin: executar um arquivo gravável pelo usuário
+    # como root permite TOCTOU (outro processo alterar o script antes do bash).
+    $ELEVAR bash -s < "$TMP_BRAVE" \
         || echo "AVISO: não foi possível instalar o Brave (instale manualmente depois)."
     rm -f "$TMP_BRAVE"
 fi

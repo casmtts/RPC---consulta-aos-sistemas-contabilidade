@@ -96,7 +96,14 @@ def _descriptografar(valor: bytes, chave: bytes) -> str:
     claro = dec.update(corpo) + dec.finalize()
     if not claro:
         return ""
-    return claro[:-claro[-1]].decode("utf-8", errors="replace")
+    # Valida o padding PKCS#7: sem isso, um byte 0 ou dados corrompidos
+    # geram cookies inválidos e falhas de sessão silenciosas.
+    padding = claro[-1]
+    if not 1 <= padding <= 16 or padding > len(claro):
+        return ""
+    if any(byte != padding for byte in claro[-padding:]):
+        return ""
+    return claro[:-padding].decode("utf-8", errors="replace")
 
 
 def _ler_cookies(caminho_db: Path, chave: bytes) -> dict[str, str]:
