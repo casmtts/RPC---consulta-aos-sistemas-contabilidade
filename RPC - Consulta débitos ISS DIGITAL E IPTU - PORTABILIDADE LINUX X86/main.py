@@ -5191,7 +5191,8 @@ class MainWindow(QMainWindow):
             )
 
         inicio_manual = self._registro_inicial_manual()
-        if self._inicio_manual_ativo():
+        inicio_manual_usado = self._inicio_manual_ativo()
+        if inicio_manual_usado:
             # Vale mesmo com número 1: foi explicitamente escolhido, então
             # não pode cair na retomada automática do progresso.
             indice_inicial = max(0, inicio_manual - 1)
@@ -5245,6 +5246,14 @@ class MainWindow(QMainWindow):
         self.worker.finalizado.connect(self._ao_finalizar)
         self.worker.finished.connect(self._limpar_worker)
         self.worker.start()
+        if inicio_manual_usado:
+            # A escolha manual vale somente para esta rodada: volta ao padrão
+            # para que parar e retomar continue de onde parou.
+            self.combo_inicio.setCurrentIndex(0)
+            self._log(
+                "Início manual aplicado nesta rodada; a opção voltou para "
+                "'Continuar de onde parou'."
+            )
         self._atualizar_botao_pagos()
         self._avisar_se_http()
         if indice_inicial:
@@ -6139,6 +6148,12 @@ class MainWindow(QMainWindow):
         self.worker.finalizado.connect(self._ao_finalizar)
         self.worker.finished.connect(self._limpar_worker)
         self.worker.start()
+        if self._inicio_manual_ativo():
+            self.combo_inicio.setCurrentIndex(0)
+            self._log(
+                "Início manual aplicado nesta rodada; a opção voltou para "
+                "'Continuar de onde parou'."
+            )
         self._atualizar_botao_pagos()
         if continuar:
             self._log(
