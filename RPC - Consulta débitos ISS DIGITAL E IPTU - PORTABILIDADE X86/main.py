@@ -891,6 +891,15 @@ def _campo(registro: dict, nome: str) -> str:
     return ""
 
 
+def _indice_coluna(cabecalho: list[str], nome: str) -> int | None:
+    """Índice da coluna pelo nome, ignorando acentos e maiúsculas."""
+    alvo = _sem_acento(nome)
+    for indice, coluna in enumerate(cabecalho):
+        if alvo in _sem_acento(str(coluna or "")):
+            return indice
+    return None
+
+
 def _config_bool(config, chave: str, padrao: bool) -> bool:
     """Lê um bool do QSettings sem cair na armadilha bool('false') == True.
 
@@ -3536,6 +3545,66 @@ class MainWindow(QMainWindow):
         self.worker_cifs = None
         self._atualizar_botao_revisar()
 
+    def _importar_resultados_da_planilha(
+        self, cabecalho: list[str], registros: list[dict]
+    ) -> int:
+        """Importa as linhas já classificadas da própria planilha.
+
+        Quando a planilha carregada já é um relatório (tem coluna Status),
+        seus VERIFICADO / COBRÁVEL / ERRO DE CONSULTA etc. passam a aparecer
+        na aba Resultados, sem precisar depender só do .json de progresso.
+        """
+        col_status = _indice_coluna(cabecalho, "status")
+        if col_status is None:
+            return 0
+        col_cpf = (
+            _indice_coluna(cabecalho, "cpf")
+            if _indice_coluna(cabecalho, "cpf") is not None
+            else _indice_coluna(cabecalho, "cnpj")
+        )
+        if col_cpf is None:
+            return 0
+
+        def valor(registro: dict, nome: str) -> str:
+            indice = _indice_coluna(cabecalho, nome)
+            if indice is None or indice >= len(cabecalho):
+                return ""
+            return str(registro.get(cabecalho[indice], "") or "").strip()
+
+        itens: list[dict] = []
+        for posicao, registro in enumerate(registros, start=1):
+            status = str(registro.get(cabecalho[col_status], "") or "").strip()
+            if not status:
+                continue
+            itens.append({
+                "Nome": valor(registro, "nome"),
+                "CPF": valor(registro, "cpf") or valor(registro, "cnpj"),
+                "Tipo de Débito": valor(registro, "tipo de debito"),
+                "Competência": valor(registro, "competencia"),
+                "Valor (R$)": valor(registro, "valor"),
+                "Status": status,
+                "CIF": valor(registro, "cif"),
+                "ID Dívida": valor(registro, "id divida"),
+                "Vencimento": valor(registro, "vencimento"),
+                "Erro": valor(registro, "erro"),
+                "Situação (site)": valor(registro, "situacao"),
+                "MOTIVO": valor(registro, "motivo"),
+                "_indice": posicao,
+            })
+        if not itens:
+            return 0
+        self.resultados = _ordenar_resultados(itens)
+        self.tabela_resultados.setRowCount(0)
+        for item in self.resultados:
+            self._inserir_linha_tabela(item)
+        self.botao_salvar.setEnabled(True)
+        self._atualizar_painel_resultados()
+        self._log(
+            f"Importados {len(itens)} resultado(s) da própria planilha "
+            "(status já classificados)."
+        )
+        return len(itens)
+
     def _carregar_resultados_salvos(self) -> None:
         """Mostra os resultados já gravados ao reabrir a planilha."""
         if self.worker is not None and self.worker.isRunning():
@@ -3579,7 +3648,20 @@ class MainWindow(QMainWindow):
             documento = str(item.get("CPF", "")).strip()
             if documento in posicoes:
                 item["_indice"] = posicoes[documento]
-        self.resultados = _ordenar_resultados(resultados)
+        # Mescla com o que veio da planilha; o progresso (mais recente)
+        # prevalece nas linhas que ele também contém.
+        chaves_planilha = {
+            (str(i.get("CPF", "")).strip(), int(i.get("_indice") or 0))
+            for i in self.resultados
+        }
+        novos = [
+            r for r in resultados
+            if (
+                str(r.get("CPF", "")).strip(),
+                int(r.get("_indice") or 0),
+            ) not in chaves_planilha
+        ]
+        self.resultados = _ordenar_resultados(list(self.resultados) + novos)
         self.tabela_resultados.setRowCount(0)
         for item in self.resultados:
             self._inserir_linha_tabela(item)
@@ -4572,6 +4654,7 @@ class MainWindow(QMainWindow):
 
         self.cabecalho = cabecalho
         self.registros = registros
+        self.resultados = []
         self.label_contagem.setText(f"{len(registros)} registro(s) carregado(s)")
         self._preencher_tabela(self.tabela_entrada, cabecalho, registros)
         self.botao_executar.setEnabled(True)
@@ -4582,8 +4665,11 @@ class MainWindow(QMainWindow):
             + f" — {len(registros)} registros"
         )
 
-        # Resultados de uma execução anterior já aparecem ao abrir o
-        # programa, e Revisar fica disponível na aba Resultados.
+        # Linhas já classificadas na própria planilha (VERIFICADO, COBRÁVEL,
+        # ERRO DE CONSULTA...) aparecem como resultados ao carregá-la.
+        self._importar_resultados_da_planilha(cabecalho, registros)
+        # O progresso da execução anterior complementa/sobrescreve o que veio
+        # da planilha, por ser mais recente.
         self._carregar_resultados_salvos()
         self._atualizar_botao_revisar()
 
