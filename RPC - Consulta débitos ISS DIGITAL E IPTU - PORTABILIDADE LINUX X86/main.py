@@ -1996,6 +1996,8 @@ class ConsultaWorker(QThread):
         self._falhas_rede = 0
         self._falhas_sessao_seguidas = 0
         self._bloqueio_sessao = False
+        self._erros_consulta_total = 0
+        self._site_instavel = False
 
     def stop(self) -> None:
         self._parar = True
@@ -2112,6 +2114,14 @@ class ConsultaWorker(QThread):
         if _cdp_ativo():
             return True
         return bool(self.cookie and self.cookie_sessao)
+
+    def _registrar_erro_consulta(self) -> bool:
+        """Conta erros da rodada; 9 interrompem para não gerar falhas em massa."""
+        self._erros_consulta_total += 1
+        if self._erros_consulta_total >= 9:
+            self._site_instavel = True
+            return True
+        return False
 
     def _registrar_falha_sessao(self, mensagem: str) -> bool:
         """True se a falha de sessão é persistente e deve encerrar a rodada.
@@ -2488,6 +2498,13 @@ class ConsultaWorker(QThread):
                     }], indice_real)
                 if self._falha_rede_critica(str(exc)):
                     break
+                if self._registrar_erro_consulta():
+                    self.aviso.emit(
+                        "Site instável: 9 erros de consulta nesta rodada. "
+                        "Encerrando para não gerar ERRO DE CONSULTA em massa; "
+                        "use Revisar mais tarde, com a sessão estabilizada."
+                    )
+                    break
                 if self._registrar_falha_sessao(str(exc)):
                     self.aviso.emit(
                         "BLOQUEIO DE SESSÃO: o site não está com contribuinte "
@@ -2521,6 +2538,13 @@ class ConsultaWorker(QThread):
                         "Situação (site)": "",
                     }], indice_real)
                 if self._falha_rede_critica(str(exc)):
+                    break
+                if self._registrar_erro_consulta():
+                    self.aviso.emit(
+                        "Site instável: 9 erros de consulta nesta rodada. "
+                        "Encerrando para não gerar ERRO DE CONSULTA em massa; "
+                        "use Revisar mais tarde, com a sessão estabilizada."
+                    )
                     break
                 if self._registrar_falha_sessao(str(exc)):
                     self.aviso.emit(
@@ -2573,7 +2597,12 @@ class ConsultaWorker(QThread):
                 entrada=self.entrada, aba=self.aba, forcado=True,
             )
 
-        if self._bloqueio_sessao:
+        if self._site_instavel:
+            self.finalizado.emit(
+                "Consulta encerrada: site instável (9 erros). Estabilize a "
+                "sessão/conexão e use 'Revisar' para refazer só os erros."
+            )
+        elif self._bloqueio_sessao:
             self.finalizado.emit(
                 "Consulta encerrada por BLOQUEIO DE SESSÃO — selecione o "
                 "contribuinte no Brave (depuração 9222) e rode novamente."
@@ -5070,6 +5099,18 @@ class MainWindow(QMainWindow):
             self._log(
                 f"{item.get('Status')} {item.get('CPF', '')}: {item.get('Erro', '')}"
             )
+            # Revisão paralela usa a MESMA sessão JSF: requisições concorrentes
+            # invalidam o viewstate e geram "sessão expirada" em ambas.
+            if (
+                item.get("Status") == STATUS_ERRO_CONSULTA
+                and self.worker_revisao is not None
+                and self.worker_revisao.isRunning()
+            ):
+                self.worker_revisao.stop()
+                self._log(
+                    "Revisão paralela interrompida: erro de consulta na "
+                    "principal (evita conflito de sessão no site)."
+                )
 
     def _ao_documento_revisado(self, documento: str, novos: list[dict]) -> None:
         """Substitui, na tabela e na lista, as linhas antigas de um documento."""
@@ -5734,7 +5775,10 @@ class MainWindow(QMainWindow):
 
     def _ao_finalizar(self, mensagem: str) -> None:
         self._resetar_aviso_esc()
-        if "bloqueio de sessão" in mensagem.lower():
+        if (
+            "bloqueio de sessão" in mensagem.lower()
+            or "site instável" in mensagem.lower()
+        ):
             # A revisão paralela usando a mesma sessão inválida só multiplica
             # erros e atrasa a consulta principal.
             if self.worker_revisao is not None and self.worker_revisao.isRunning():
