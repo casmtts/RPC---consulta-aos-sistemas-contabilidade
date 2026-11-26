@@ -1985,6 +1985,8 @@ class ConsultaWorker(QThread):
         self.documentos_ignorar = documentos_ignorar or set()
         self._parar = False
         self._falhas_rede = 0
+        self._falhas_sessao_seguidas = 0
+        self._bloqueio_sessao = False
 
     def stop(self) -> None:
         self._parar = True
@@ -2101,6 +2103,30 @@ class ConsultaWorker(QThread):
         if _cdp_ativo():
             return True
         return bool(self.cookie and self.cookie_sessao)
+
+    def _registrar_falha_sessao(self, mensagem: str) -> bool:
+        """True se a falha de sessão é persistente e deve encerrar a rodada.
+
+        "Sem contribuinte selecionado" bloqueia TODOS os registros — para no
+        primeiro. Outras falhas de sessão toleram 2 seguidas antes de parar,
+        para não gerar milhares de ERRO DE CONSULTA com retries de ~1 min.
+        """
+        texto = str(mensagem or "").lower()
+        indicadores = (
+            "sem contribuinte", "redirecionou para a home",
+            "sessão expirada", "sessao expirada", "status 404",
+            "status 500", "status 502", "status 503", "status 504",
+            "indisponível", "indisponivel",
+        )
+        if not any(indicio in texto for indicio in indicadores):
+            self._falhas_sessao_seguidas = 0
+            return False
+        self._falhas_sessao_seguidas += 1
+        limite = 1 if "sem contribuinte" in texto else 2
+        if self._falhas_sessao_seguidas >= limite:
+            self._bloqueio_sessao = True
+            return True
+        return False
 
     def _sem_sessao_para_continuar(self, mensagem: str) -> bool:
         """True se a falha é de login e não há sessão para recuperar."""
@@ -2431,6 +2457,7 @@ class ConsultaWorker(QThread):
                 self._publicar(documento, novos, indice_real)
                 ok += 1
                 self._falhas_rede = 0
+                self._falhas_sessao_seguidas = 0
             except ConsultaInterrompida:
                 # O usuário clicou em Parar no meio da consulta: não publica
                 # resultado para este item e encerra o loop imediatamente.
@@ -2451,6 +2478,15 @@ class ConsultaWorker(QThread):
                         "Situação (site)": "",
                     }], indice_real)
                 if self._falha_rede_critica(str(exc)):
+                    break
+                if self._registrar_falha_sessao(str(exc)):
+                    self.aviso.emit(
+                        "BLOQUEIO DE SESSÃO: o site não está com contribuinte "
+                        "selecionado (ou a sessão expirou). Selecione o "
+                        "contribuinte no Brave com depuração (9222) e rode "
+                        "novamente. Consulta encerrada para não gerar ERRO "
+                        "DE CONSULTA em massa."
+                    )
                     break
                 if self._sem_sessao_para_continuar(str(exc)):
                     self.aviso.emit(
@@ -2476,6 +2512,15 @@ class ConsultaWorker(QThread):
                         "Situação (site)": "",
                     }], indice_real)
                 if self._falha_rede_critica(str(exc)):
+                    break
+                if self._registrar_falha_sessao(str(exc)):
+                    self.aviso.emit(
+                        "BLOQUEIO DE SESSÃO: o site não está com contribuinte "
+                        "selecionado (ou a sessão expirou). Selecione o "
+                        "contribuinte no Brave com depuração (9222) e rode "
+                        "novamente. Consulta encerrada para não gerar ERRO "
+                        "DE CONSULTA em massa."
+                    )
                     break
                 if self._sem_sessao_para_continuar(str(exc)):
                     self.aviso.emit(
@@ -2519,7 +2564,12 @@ class ConsultaWorker(QThread):
                 entrada=self.entrada, aba=self.aba, forcado=True,
             )
 
-        if self._parar:
+        if self._bloqueio_sessao:
+            self.finalizado.emit(
+                "Consulta encerrada por BLOQUEIO DE SESSÃO — selecione o "
+                "contribuinte no Brave (depuração 9222) e rode novamente."
+            )
+        elif self._parar:
             self.finalizado.emit(
                 f"Processamento interrompido: {ok} OK, {erros} com erro "
                 f"({processados}/{total} linhas processadas)."
@@ -5627,6 +5677,12 @@ class MainWindow(QMainWindow):
 
     def _ao_finalizar(self, mensagem: str) -> None:
         self._resetar_aviso_esc()
+        if "bloqueio de sessão" in mensagem.lower():
+            # A revisão paralela usando a mesma sessão inválida só multiplica
+            # erros e atrasa a consulta principal.
+            if self.worker_revisao is not None and self.worker_revisao.isRunning():
+                self.worker_revisao.stop()
+                self._log("Revisão paralela interrompida: bloqueio de sessão.")
         if getattr(self, "_revisao_completa_ativa", False):
             self._revisao_completa_ativa = False
             if "Concluído" in mensagem:
