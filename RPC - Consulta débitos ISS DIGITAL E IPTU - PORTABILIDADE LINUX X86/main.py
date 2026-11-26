@@ -6047,34 +6047,34 @@ class MainWindow(QMainWindow):
         cifs_por_cpf: dict[str, set[str]] = {}
         nomes_por_cpf: dict[str, str] = {}
         if continuar:
-            # A consulta foi interrompida: rever o que não tem resultado E
-            # os itens pendentes (ERRO DE CONSULTA / DOCUMENTO INVÁLIDO).
-            # Se a própria revisão foi interrompida, continuar pelo que
-            # faltou nesta rodada.
+            # Se a própria revisão foi interrompida, continuar pelo que já
+            # havia sido selecionado nela.
             if self._registros_revisao:
                 base = self._registros_revisao
                 concluidos = self._revisao_concluida
+                registros = [
+                    dict(r, _indice_original=int(_campo(r, "_indice_original") or i))
+                    for i, r in enumerate(base, start=1)
+                    if self._documento_registro(r) not in concluidos
+                ]
             else:
-                base = self.registros
+                # Revisa SOMENTE documentos que já produziram resultado e
+                # precisam de nova tentativa — nunca a planilha inteira.
                 pendentes = {
                     str(item.get("CPF", "")).strip()
                     for item in self.resultados
                     if self._precisa_revisao(item)
                 }
                 pendentes.discard("")
-                concluidos = {
-                    str(r.get("CPF", "")).strip()
-                    for r in self.resultados
-                    if str(r.get("CPF", "")).strip()
-                } - pendentes
-            registros = [
-                dict(r, _indice_original=int(_campo(r, "_indice_original") or i))
-                for i, r in enumerate(base, start=1)
-                if self._documento_registro(r) not in concluidos
-            ]
+                registros = [
+                    dict(r, _indice_original=int(_campo(r, "_indice_original") or i))
+                    for i, r in enumerate(self.registros, start=1)
+                    if self._documento_registro(r) in pendentes
+                ]
             if not registros:
                 QMessageBox.information(
-                    self, "Revisão", "Não faltam consultas: tudo já foi processado."
+                    self, "Revisão",
+                    "Não há resultados pendentes para revisar.",
                 )
                 self._registros_revisao = []
                 return
@@ -6086,12 +6086,8 @@ class MainWindow(QMainWindow):
             }
             documentos.discard("")
 
-            # Inclui também os registros que ficaram sem resultado após uma
-            # parada (ou que nunca chegaram a ser consultados).
-            for registro in self._registros_faltantes():
-                documento = self._documento_registro(registro)
-                if documento:
-                    documentos.add(documento)
+            # Somente resultados já existentes: a planilha de consulta
+            # (registros sem resultado) fica de fora do Revisar.
 
             # Coleta os CIFs das dívidas (principalmente IPTU/IMÓVEL) para que
             # a revisão também consulte o imóvel e traga campos que faltavam.
