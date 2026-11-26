@@ -1963,6 +1963,51 @@ def consultar_debito(
     return debitos
 
 
+def consultar_com_plano_b(
+    cpf: str,
+    nome: str = "",
+    cookie_value: str = "",
+    timeout: int = 60,
+    tipo: str = "",
+    cookie_sessao: str = "",
+    deve_parar=None,
+    sem_confirmacao: list | None = None,
+    incluir_pagos: bool = False,
+    segundo_plano: bool = False,
+) -> list[dict]:
+    """Consulta com PLANO B automático, sem intervenção do usuário.
+
+    Plano A: estratégia escolhida (aba real do Brave via CDP, ou Chromium
+    invisível quando ``segundo_plano=True``).
+    Plano B: se a primeira falhar por sessão/site, renova os cookies do
+    navegador e tenta com a estratégia OPOSTA (CDP <-> headless). Assim uma
+    sessão ruim não obriga o usuário a ficar mexendo na máquina.
+    """
+    try:
+        return consultar_debito(
+            cpf, nome, cookie_value, timeout, tipo, cookie_sessao,
+            deve_parar=deve_parar, sem_confirmacao=sem_confirmacao,
+            incluir_pagos=incluir_pagos, segundo_plano=segundo_plano,
+        )
+    except ConsultaInterrompida:
+        raise
+    except (
+        ConsultaNaoVerificada, ConsultaHttpNaoVerificada,
+        ErroSiteNaoVerificada,
+    ) as exc:
+        if deve_parar is not None and deve_parar():
+            raise ConsultaInterrompida() from exc
+        # Plano B: cookies renovados + modalidade contrária à que falhou.
+        jwt, sessao = _renovar_token(cookie_value, cookie_sessao)
+        return consultar_debito(
+            cpf, nome, jwt, timeout, tipo, sessao,
+            _tentativa=1, deve_parar=deve_parar,
+            sem_confirmacao=sem_confirmacao,
+            incluir_pagos=incluir_pagos,
+            segundo_plano=not segundo_plano,
+        )
+
+
 # ============================================================
 # Worker (processamento em segundo plano)
 # ============================================================
@@ -2364,7 +2409,7 @@ class ConsultaWorker(QThread):
                         try:
                             with _SESSAO_SITE_LOCK:
                                 debitos = _executar_com_playwright(
-                                    consultar_debito,
+                                    consultar_com_plano_b,
                                     documento, nome, self.cookie, self.timeout,
                                     tipo, self.cookie_sessao,
                                     deve_parar=self.parar_solicitado,
