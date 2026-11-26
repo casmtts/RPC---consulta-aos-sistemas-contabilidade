@@ -3719,12 +3719,14 @@ class MainWindow(QMainWindow):
         self.campo_registro_inicial = QSpinBox()
         self.campo_registro_inicial.setRange(1, 99999)
         self.campo_registro_inicial.setValue(1)
-        self.campo_registro_inicial.setEnabled(False)
+        # Escondido (não só desabilitado) enquanto o padrão for retomar:
+        # campo à vista sugeriria que é preciso digitar um número.
+        self.campo_registro_inicial.setVisible(False)
         self.campo_registro_inicial.setToolTip(
-            "Disponível somente com 'Escolher registro inicial'."
+            "Número do registro inicial, usado somente quando escolhido."
         )
         self.combo_inicio.currentIndexChanged.connect(
-            lambda indice: self.campo_registro_inicial.setEnabled(indice == 1)
+            lambda indice: self.campo_registro_inicial.setVisible(indice == 1)
         )
         linha_inicio.addWidget(self.combo_inicio)
         linha_inicio.addWidget(self.campo_registro_inicial)
