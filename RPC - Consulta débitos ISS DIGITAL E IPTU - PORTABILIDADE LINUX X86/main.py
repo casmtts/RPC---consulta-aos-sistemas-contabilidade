@@ -4126,6 +4126,21 @@ class MainWindow(QMainWindow):
         linha_inicio.addStretch()
         execucao_layout.addLayout(linha_inicio)
 
+        self.campo_nova_planilha = QCheckBox(
+            "Gerar relatório em NOVA planilha (com data/hora)"
+        )
+        self.campo_nova_planilha.setChecked(
+            self._config.value("nova_planilha", False, type=bool)
+        )
+        self.campo_nova_planilha.setToolTip(
+            "Marcado: cria um arquivo novo a cada gravação. Desmarcado "
+            "(padrão): atualiza sempre a MESMA planilha de relatório."
+        )
+        self.campo_nova_planilha.toggled.connect(
+            lambda ativo: self._config.setValue("nova_planilha", ativo)
+        )
+        execucao_layout.addWidget(self.campo_nova_planilha)
+
         self.label_dica_espaco = QLabel(
             'PRESSIONE "ESC" 2x PARA PARAR CONSULTA'
         )
@@ -6291,8 +6306,29 @@ class MainWindow(QMainWindow):
             except Exception:  # noqa: BLE001
                 pass
 
+    def _caminho_relatorio(self, parcial: bool = False) -> Path:
+        """Destino do relatório: mesmo arquivo (padrão) ou novo com data/hora."""
+        stem = (
+            self.caminho_entrada.stem
+            if self.caminho_entrada else "RELATORIO_DEBITOS"
+        )
+        sufixo = "resultado_parcial" if parcial else "resultado"
+        campo = getattr(self, "campo_nova_planilha", None)
+        if campo is not None and campo.isChecked():
+            atributo = "_destino_auto_parcial" if parcial else "_destino_auto"
+            destino = getattr(self, atributo)
+            if destino is None:
+                destino = _pasta_relatorios() / (
+                    f"{_novo_nome_relatorio(stem, sufixo)}.xlsx"
+                )
+                setattr(self, atributo, destino)
+            return destino
+        # Padrão: reutiliza a mesma planilha, somando os resultados nela.
+        base = re.sub(r"_\d{2}\.\d{2}\.\d{4}$", "", stem)
+        return _pasta_relatorios() / f"{base}_{sufixo}.xlsx"
+
     def _salvar_automatico(self, parcial: bool = False) -> None:
-        """Salva em arquivo NOVO com data/hora — nunca sobrescreve outro."""
+        """Salva na mesma planilha (padrão) ou em arquivo novo, se marcado."""
         if not self.resultados:
             return
         relatorio_com_observacao = self._usa_observacao()
@@ -6302,18 +6338,7 @@ class MainWindow(QMainWindow):
                 / f"{self.caminho_entrada.stem}_1_LINHA_TODOS_OS_DEBITOS.xlsx"
             )
         else:
-            atributo = "_destino_auto_parcial" if parcial else "_destino_auto"
-            destino = getattr(self, atributo)
-            if destino is None:
-                stem = (
-                    self.caminho_entrada.stem
-                    if self.caminho_entrada else "RELATORIO_DEBITOS"
-                )
-                sufixo = "resultado_parcial" if parcial else "resultado"
-                destino = _pasta_relatorios() / (
-                    f"{_novo_nome_relatorio(stem, sufixo)}.xlsx"
-                )
-                setattr(self, atributo, destino)
+            destino = self._caminho_relatorio(parcial)
         try:
             if relatorio_com_observacao:
                 self._agendar_salvamento_saidas()
@@ -6389,11 +6414,7 @@ class MainWindow(QMainWindow):
             )
             caminho = None
         else:
-            stem = (
-                self.caminho_entrada.stem
-                if self.caminho_entrada else "RELATORIO_DEBITOS"
-            )
-            nome = f"{_novo_nome_relatorio(stem)}.xlsx"
+            nome = self._caminho_relatorio().name
             caminho, _ = QFileDialog.getSaveFileName(
                 self, "Salvar resultado",
                 str(_pasta_relatorios() / nome),
