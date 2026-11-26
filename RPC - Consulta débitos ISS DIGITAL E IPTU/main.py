@@ -1257,6 +1257,10 @@ def _tipo_e_campo_documento(documento: str, tipo: str = "") -> tuple[str, str]:
     }
     if tipo_norm in mapa:
         return mapa[tipo_norm]
+    # CIF/inscrição imobiliária são numéricos curtos (ex.: 3225). Não são
+    # CPF/CNPJ malformados: consultar como IMÓVEL evita erro desnecessário.
+    if digitos and len(digitos) < 11:
+        return "IMOVEL", "#documentoContribuinteCif"
     raise ConsultaNaoVerificada(
         "Não foi possível inferir FÍSICA/JURÍDICA do documento informado "
         "(esperado 11 dígitos para CPF ou 14 para CNPJ)."
@@ -2340,6 +2344,8 @@ class ConsultaWorker(QThread):
                 tipo = "FISICA"
             elif len(digitos_documento) == 14:
                 tipo = "JURIDICA"
+            elif digitos_documento and len(digitos_documento) < 11:
+                tipo = "IMOVEL"  # CIF curto, não CPF malformado
             elif not tipo:
                 tipo = ""
             rotulo = nome or documento or f"linha {indice}"
@@ -3035,7 +3041,8 @@ def _estilo_aplicacao() -> str:
 def _configurar_tabela(tabela: QTableWidget, colunas: list[str],
                        zebra: bool = False,
                        larguras: list[int | None] | None = None,
-                       scroll_sempre: bool = False) -> None:
+                       scroll_sempre: bool = False,
+                       numerar: bool = False) -> None:
     """Aplica o visual moderno das tabelas (cabeçalho, zebra e espaçamento)."""
     tabela.setColumnCount(len(colunas))
     tabela.setHorizontalHeaderLabels(colunas)
@@ -3045,7 +3052,9 @@ def _configurar_tabela(tabela: QTableWidget, colunas: list[str],
     tabela.setShowGrid(False)
     tabela.setWordWrap(False)
     tabela.setAlternatingRowColors(zebra)
-    tabela.verticalHeader().setVisible(False)
+    tabela.verticalHeader().setVisible(numerar)
+    if numerar:
+        tabela.verticalHeader().setFixedWidth(46)
 
     # Barra vertical sempre à vista na prévia e nos resultados.
     tabela.setVerticalScrollBarPolicy(
@@ -3092,6 +3101,15 @@ def _configurar_tabela(tabela: QTableWidget, colunas: list[str],
             background-color: {p["selecao"]};
             color: {p["texto"]};
             border-bottom: 1px solid transparent;
+        }}
+        QHeaderView::section:vertical {{
+            background-color: {p["aba_fundo"]};
+            color: {p["texto_neutro"]};
+            font-size: 11px;
+            font-weight: 600;
+            padding: 4px 2px;
+            border: none;
+            border-right: 1px solid {p["borda"]};
         }}
         QHeaderView::section {{
             background-color: {p["cabecalho"]};
@@ -5097,12 +5115,20 @@ class MainWindow(QMainWindow):
         self.label_revisao_paralela.setText(f"Revisão paralela: {mensagem}")
 
     def _preencher_tabela_resultados(self) -> None:
-        """Tela da consulta: ordem cronológica, competência final por último.
+        """Tela: contribuintes em ordem alfabética; competência final por último.
 
         O relatório salvo continua com os débitos mais novos primeiro.
         """
         self.tabela_resultados.setRowCount(0)
-        for item in sorted(self.resultados, key=_chave_ordem_competencia):
+        for item in sorted(
+            self.resultados,
+            key=lambda r: (
+                _sem_acento(str(r.get("Nome", "") or "")).strip().lower(),
+                _chave_ordem_competencia(r),
+                int(r.get("_indice") or 0),
+                str(r.get("CPF", "") or ""),
+            ),
+        ):
             self._inserir_linha_tabela(item)
 
     def _inserir_linha_tabela(self, item: dict) -> None:
