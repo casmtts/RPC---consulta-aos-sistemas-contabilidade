@@ -568,19 +568,23 @@ def _chave_ordem_competencia(item: dict) -> tuple[int, int]:
 def _ordenar_resultados(resultados: list[dict]) -> list[dict]:
     """Contribuintes em ordem alfabética; débitos do mais novo ao mais velho.
 
-    Esta é a ordem dos RELATÓRIOS gravados. Na tela da consulta a ordem é
-    cronológica (competência final por último), aplicada ao preencher a
-    tabela — sem alterar o arquivo salvo.
+    A competência é comparada por ano E mês (uma competência só com ano é
+    tratada como fim do ano), para que os débitos realmente recentes venham
+    primeiro. Esta é a ordem dos RELATÓRIOS gravados; a tela da consulta
+    usa a ordem da planilha, aplicada ao preencher a tabela.
     """
-    return sorted(
-        resultados,
-        key=lambda item: (
+
+    def chave(item: dict) -> tuple:
+        ano, mes = _chave_ordem_competencia(item)
+        return (
             _sem_acento(str(item.get("Nome", "") or "")).strip().lower(),
-            -_ano_debito(item),
+            -ano,
+            -mes,
             int(item.get("_indice") or 0),
             str(item.get("CPF", "") or ""),
-        ),
-    )
+        )
+
+    return sorted(resultados, key=chave)
 
 
 _DEBITOS_ANTIGOS: dict[str, list[dict]] | None = None
