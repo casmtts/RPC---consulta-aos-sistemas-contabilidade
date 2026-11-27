@@ -271,6 +271,15 @@ branco:
 > o progresso é salvo e um novo **Revisar** retoma exatamente os que ficaram
 > vazios na mesma aba. Para as outras abas, selecione cada uma e repita.
 
+> **CPFs do sistema legado** (`000.000.xxx-xx`) têm dígito verificador inválido.
+> No **Revisar** eles são enviados ao site mesmo assim: se o site rejeitar, a
+> classificação anterior é mantida e o resumo informa quantas consultas
+> forçadas falharam. Na consulta normal eles continuam sendo gravados como
+> `DOCUMENTO INVÁLIDO`. Para recuperar os débitos sem depender do site, use um
+> CSV de apoio `relatorio-lancamentos-debito-divida-ativa-*.csv` recente (até
+> 30 dias) na pasta do programa. A correção definitiva é substituir esses
+> códigos pelos CPFs reais na planilha.
+
 ### Gerar a cópia preenchida sem consultar o site
 
 O arquivo `preencher_observacao.py` usa a base de débitos já existente

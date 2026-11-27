@@ -12,6 +12,15 @@ from datetime import datetime
 
 from openpyxl.styles import Alignment, Font, PatternFill
 
+# Texto rico permite deixar só as palavras das cores em negrito dentro da
+# mesma célula. Versões antigas do openpyxl não têm esse recurso: nesse caso
+# o texto segue sendo gravado normalmente, sem quebrar o relatório.
+try:
+    from openpyxl.cell.rich_text import CellRichText, TextBlock
+    from openpyxl.cell.text import InlineFont
+except ImportError:  # pragma: no cover - depende da versão do openpyxl
+    CellRichText = None
+
 NOME_ABA = "AVISO"
 NOME_LEGENDA = "LEGENDA"
 
@@ -43,6 +52,29 @@ CORES_LEGENDA = (
     (None, None),
     (None, None),
 )
+
+# Palavras que identificam as cores usadas na legenda (seção 7 do aviso).
+PADRAO_COR = re.compile(
+    r"\b(verde|vermelho|laranja|amarelo|amarela|roxo)\b", re.IGNORECASE
+)
+
+
+def _destacar_cores(texto: str):
+    """Deixa só as palavras de cor em negrito dentro de uma célula."""
+    if CellRichText is None:
+        return texto
+    partes: list = []
+    posicao = 0
+    for encontrado in PADRAO_COR.finditer(texto):
+        if encontrado.start() > posicao:
+            partes.append(texto[posicao:encontrado.start()])
+        partes.append(TextBlock(InlineFont(b=True), encontrado.group(0)))
+        posicao = encontrado.end()
+    if not partes:
+        return texto
+    if posicao < len(texto):
+        partes.append(texto[posicao:])
+    return CellRichText(partes)
 
 
 TEXTO_AVISO = (
@@ -133,7 +165,7 @@ def adicionar_aviso(wb) -> None:
             for parte in textwrap.wrap(
                 trecho, width=95, break_long_words=True, break_on_hyphens=False
             ):
-                celula = ws.cell(row=linha, column=1, value=parte)
+                celula = ws.cell(row=linha, column=1, value=_destacar_cores(parte))
                 celula.font = Font(size=11, bold=negrito)
                 celula.alignment = Alignment(vertical="center", wrap_text=False)
                 ws.row_dimensions[linha].height = 16

@@ -8,6 +8,7 @@ consulta ao site e processamento em segundo plano.
 from __future__ import annotations
 
 import csv
+import os
 import random
 import re
 import shutil
@@ -2093,7 +2094,7 @@ class ConsultaWorker(QThread):
                  variar_pausa: bool = False, controle: dict | None = None,
                  documentos_ignorar: set[str] | None = None,
                  incluir_pagos: bool = False, segundo_plano: bool = False,
-                 parent=None):
+                 forcar_invalidos: bool = False, parent=None):
         super().__init__(parent)
         self.entrada = entrada
         self.aba = aba
@@ -2107,6 +2108,9 @@ class ConsultaWorker(QThread):
         self.modo_revisao = modo_revisao
         self.incluir_pagos = incluir_pagos
         self.segundo_plano = segundo_plano
+        # Quando True, a revisão tenta consultar no site mesmo documentos com
+        # dígito verificador inválido (códigos legados 000.000.xxx-xx).
+        self.forcar_invalidos = forcar_invalidos
         self.pausa = max(0.0, float(pausa))
         self.sem_navegador = sem_navegador
         self.variar_pausa = variar_pausa
@@ -2122,6 +2126,11 @@ class ConsultaWorker(QThread):
         self._bloqueio_sessao = False
         self._erros_consulta_total = 0
         self._site_instavel = False
+        # CPFs/CNPJs com dígito verificador inválido (códigos do sistema
+        # legado, ex.: 000.000.xxx-xx) não chegam a ser consultados. São
+        # contabilizados à parte para o resumo não dizer "0 OK, 0 com erro".
+        self._documentos_invalidos: list[str] = []
+        self._consultas_forcadas_falhas = 0
 
     def stop(self) -> None:
         self._parar = True
@@ -2324,6 +2333,27 @@ class ConsultaWorker(QThread):
             self.finalizado.emit("Consulta cancelada: " + aviso)
             return
 
+        if self.forcar_invalidos:
+            quantos_invalidos = sum(
+                1 for registro in self.registros
+                if not _documento_valido(
+                    (
+                        _campo(registro, "cpf") or _campo(registro, "cnpj")
+                        or _campo(registro, "documento") or _campo(registro, "cif")
+                    ),
+                    (
+                        _campo(registro, "tipo de pessoa")
+                        or _campo(registro, "tipo pessoa")
+                    ),
+                )
+            )
+            if quantos_invalidos:
+                self.aviso.emit(
+                    f"Revisão forçada: {quantos_invalidos} documento(s) com "
+                    "CPF/CNPJ inválido serão consultados mesmo assim — o site "
+                    "pode rejeitá-los."
+                )
+
         for indice, registro in enumerate(self.registros, start=1):
             if self._parar:
                 break
@@ -2382,9 +2412,11 @@ class ConsultaWorker(QThread):
             )
 
             # CPF/CNPJ com dígito verificador errado só gera erro-page no site
-            # (13445, 13446, 404...). Não adianta repetir: marca como não
-            # verificado e segue para o próximo, sem desperdiçar consultas.
-            if not _documento_valido(documento, tipo):
+            # (13445, 13446, 404...). Não adianta repetir: segue para o próximo
+            # sem desperdiçar consultas. Na revisão, nada é publicado quando
+            # não há débitos de apoio: publicar uma linha "DOCUMENTO INVÁLIDO"
+            # apagava o status original e as linhas duplicadas do mesmo CPF.
+            if not _documento_valido(documento, tipo) and not self.forcar_invalidos:
                 digitos = "".join(
                     caracter for caracter in documento if caracter.isdigit()
                 )
@@ -2409,20 +2441,23 @@ class ConsultaWorker(QThread):
                         }
                         for debito in antigos
                     ]
+                    self._publicar(documento, novos, indice_real)
                 else:
-                    novos = [{
-                        "Nome": nome, "CPF": documento,
-                        "Tipo de Débito": "-",
-                        "Competência": competencia_original or "-",
-                        "Valor (R$)": "0,00",
-                        "Status": "DOCUMENTO INVÁLIDO",
-                        "Erro": (
-                            "CPF/CNPJ inválido (dígito verificador) — "
-                            "conferir a planilha."
-                        ),
-                        "Situação (site)": "",
-                    }]
-                self._publicar(documento, novos, indice_real)
+                    self._documentos_invalidos.append(str(documento).strip())
+                    if not self.modo_revisao:
+                        novos = [{
+                            "Nome": nome, "CPF": documento,
+                            "Tipo de Débito": "-",
+                            "Competência": competencia_original or "-",
+                            "Valor (R$)": "0,00",
+                            "Status": "DOCUMENTO INVÁLIDO",
+                            "Erro": (
+                                "CPF/CNPJ inválido (dígito verificador) — "
+                                "conferir a planilha."
+                            ),
+                            "Situação (site)": "",
+                        }]
+                        self._publicar(documento, novos, indice_real)
                 if self.arquivo_progresso is not None:
                     salvar_progresso(
                         self.arquivo_progresso, indice_real, total, self.resultados,
@@ -2615,7 +2650,12 @@ class ConsultaWorker(QThread):
                 # resultado para este item e encerra o loop imediatamente.
                 break
             except (ConsultaNaoVerificada, ConsultaHttpNaoVerificada) as exc:
-                if not self._publicar_falha(
+                if self.forcar_invalidos and not _documento_valido(
+                        documento, tipo):
+                    # Código legado rejeitado pelo site: não publica nada,
+                    # para preservar o status e as duplicatas já importadas.
+                    self._consultas_forcadas_falhas += 1
+                elif not self._publicar_falha(
                     documento, nome, competencia_original, indice_real,
                     str(exc), registro,
                 ):
@@ -2631,7 +2671,12 @@ class ConsultaWorker(QThread):
                     }], indice_real)
                 if self._falha_rede_critica(str(exc)):
                     break
-                if self._registrar_erro_consulta():
+                # A rejeição de um código legado não é instabilidade do site:
+                # não pode encerrar a revisão forçada antes dos outros CPFs.
+                if not (
+                    self.forcar_invalidos
+                    and not _documento_valido(documento, tipo)
+                ) and self._registrar_erro_consulta():
                     self.aviso.emit(
                         "Site instável: 9 erros de consulta nesta rodada. "
                         "Encerrando para não gerar ERRO DE CONSULTA em massa; "
@@ -2656,7 +2701,12 @@ class ConsultaWorker(QThread):
                     )
                     break
             except Exception as exc:  # noqa: BLE001
-                if not self._publicar_falha(
+                if self.forcar_invalidos and not _documento_valido(
+                        documento, tipo):
+                    # Código legado rejeitado pelo site: não publica nada,
+                    # para preservar o status e as duplicatas já importadas.
+                    self._consultas_forcadas_falhas += 1
+                elif not self._publicar_falha(
                     documento, nome, competencia_original, indice_real,
                     str(exc), registro,
                 ):
@@ -2672,7 +2722,12 @@ class ConsultaWorker(QThread):
                     }], indice_real)
                 if self._falha_rede_critica(str(exc)):
                     break
-                if self._registrar_erro_consulta():
+                # A rejeição de um código legado não é instabilidade do site:
+                # não pode encerrar a revisão forçada antes dos outros CPFs.
+                if not (
+                    self.forcar_invalidos
+                    and not _documento_valido(documento, tipo)
+                ) and self._registrar_erro_consulta():
                     self.aviso.emit(
                         "Site instável: 9 erros de consulta nesta rodada. "
                         "Encerrando para não gerar ERRO DE CONSULTA em massa; "
@@ -2733,23 +2788,54 @@ class ConsultaWorker(QThread):
                 entrada=self.entrada, aba=self.aba, forcado=True,
             )
 
+        detalhe_invalidos = ""
+        if self._documentos_invalidos:
+            quantidade = len(self._documentos_invalidos)
+            exemplos = ", ".join(self._documentos_invalidos[:3])
+            self.aviso.emit(
+                f"{quantidade} documento(s) com CPF/CNPJ inválido (ex.: "
+                f"{exemplos}) não foram consultados — são códigos do sistema "
+                "legado que o site não aceita. Para recuperar os débitos, "
+                "coloque um CSV 'relatorio-lancamentos-debito-divida-ativa-*.csv' "
+                "recente na pasta ou corrija os CPFs na planilha."
+            )
+            detalhe_invalidos = (
+                f", {quantidade} documento(s) inválido(s) ignorado(s)"
+            )
+
+        detalhe_forcadas = ""
+        if self._consultas_forcadas_falhas:
+            quantidade = self._consultas_forcadas_falhas
+            self.aviso.emit(
+                f"{quantidade} consulta(s) forçada(s) falharam: o site "
+                "rejeitou os códigos legados. O status e as linhas já "
+                "classificadas foram mantidos; para resolver, informe os "
+                "CPFs reais na planilha."
+            )
+            detalhe_forcadas = (
+                f", {quantidade} consulta(s) forçada(s) falharam"
+            )
+
         if self._site_instavel:
-            self.finalizado.emit(
+            base = (
                 "Consulta encerrada: site instável (9 erros). Estabilize a "
-                "sessão/conexão e use 'Revisar' para refazer só os erros."
+                "sessão/conexão e use 'Revisar' para refazer só os erros"
             )
         elif self._bloqueio_sessao:
-            self.finalizado.emit(
+            base = (
                 "Consulta encerrada por BLOQUEIO DE SESSÃO — selecione o "
-                "contribuinte no Brave (depuração 9222) e rode novamente."
+                "contribuinte no Brave (depuração 9222) e rode novamente"
             )
         elif self._parar:
-            self.finalizado.emit(
+            base = (
                 f"Processamento interrompido: {ok} OK, {erros} com erro "
-                f"({processados}/{total} linhas processadas)."
+                f"({processados}/{total} linhas processadas)"
             )
         else:
-            self.finalizado.emit(f"Concluído: {ok} OK, {erros} com erro.")
+            base = f"Concluído: {ok} OK, {erros} com erro"
+        self.finalizado.emit(
+            base + detalhe_invalidos + detalhe_forcadas + "."
+        )
 
 
 # ============================================================
@@ -2985,6 +3071,9 @@ def _estilo_aplicacao() -> str:
         QLineEdit:focus, QComboBox:focus, QPlainTextEdit:focus, QDoubleSpinBox:focus, QSpinBox:focus {{
             border-color: {p["realce"]};
         }}
+        QDoubleSpinBox, QSpinBox {{
+            padding-right: 24px;
+        }}
         QTabWidget::pane {{
             border: 1px solid {p["borda"]};
             border-radius: 8px;
@@ -3095,24 +3184,39 @@ def _estilo_aplicacao() -> str:
             border: 1px solid {p["borda"]};
         }}
         QAbstractSpinBox::up-button {{
-            subcontrol-origin: border;
+            subcontrol-origin: padding;
             subcontrol-position: top right;
-            width: 17px;
+            width: 18px;
+            height: 14px;
             background: {p["aba_fundo"]};
             border: 1px solid {p["borda"]};
             border-radius: 0 5px 0 0;
         }}
         QAbstractSpinBox::down-button {{
-            subcontrol-origin: border;
+            subcontrol-origin: padding;
             subcontrol-position: bottom right;
-            width: 17px;
+            width: 18px;
+            height: 14px;
             background: {p["aba_fundo"]};
             border: 1px solid {p["borda"]};
             border-radius: 0 0 5px 0;
         }}
-        QAbstractSpinBox::up-arrow, QAbstractSpinBox::down-arrow {{
-            width: 8px;
-            height: 8px;
+        QAbstractSpinBox::up-button:hover, QAbstractSpinBox::down-button:hover {{
+            background: {p["realce"]};
+        }}
+        QAbstractSpinBox::up-arrow {{
+            width: 0px;
+            height: 0px;
+            border-left: 4px solid transparent;
+            border-right: 4px solid transparent;
+            border-bottom: 6px solid {p["texto"]};
+        }}
+        QAbstractSpinBox::down-arrow {{
+            width: 0px;
+            height: 0px;
+            border-left: 4px solid transparent;
+            border-right: 4px solid transparent;
+            border-top: 6px solid {p["texto"]};
         }}
     """
 
@@ -3351,11 +3455,71 @@ class MainWindow(QMainWindow):
             + ("ativada." if ativo else "desativada.")
         )
 
+    def _pasta_compartilhada_manual(self) -> Path | None:
+        """Caminho escolhido pelo usuário, ou None para usar o automático."""
+        valor = str(
+            self._config.value("pasta_compartilhada_manual", "", type=str) or ""
+        ).strip()
+        return Path(valor).expanduser() if valor else None
+
+    def _atualizar_campo_pasta_compartilhada(self) -> None:
+        campo = getattr(self, "campo_pasta_compartilhada", None)
+        if campo is None:
+            return
+        escolhida = self._pasta_compartilhada_manual()
+        if escolhida is not None:
+            campo.setText(str(escolhida))
+            campo.setToolTip(
+                "Pasta escolhida manualmente. Use 'Usar automática' para "
+                "voltar a detectar o compartilhamento do VirtualBox."
+            )
+        else:
+            campo.setText("Automática (departamento d.a)")
+            campo.setToolTip(
+                "O programa Procura a pasta compartilhada do VirtualBox. "
+                "Se falhar, use 'Escolher pasta…' para informar outro caminho."
+            )
+
+    def _escolher_pasta_compartilhada(self) -> None:
+        """Permite informar outro diretório quando a pasta automática falha."""
+        atual = self._pasta_compartilhada_manual() or Path.home()
+        caminho = QFileDialog.getExistingDirectory(
+            self,
+            "Escolher pasta para os relatórios",
+            str(atual),
+            QFileDialog.Option.ShowDirsOnly,
+        )
+        if not caminho:
+            return
+        destino = Path(caminho).expanduser()
+        if not destino.is_dir() or not os.access(destino, os.W_OK):
+            QMessageBox.warning(
+                self, "Pasta dos relatórios",
+                f"Não foi possível gravar nesta pasta:\n{destino}\n\n"
+                "Escolha um diretório existente com permissão de escrita."
+            )
+            return
+        self._config.setValue("pasta_compartilhada_manual", str(destino))
+        self._aviso_compartilhamento = False
+        self._atualizar_campo_pasta_compartilhada()
+        self._log(f"Pasta dos relatórios definida manualmente: {destino}")
+        self._sincronizar_compartilhamento(manual=True)
+
+    def _usar_pasta_automatica(self) -> None:
+        """Volta à detecção automática da pasta compartilhada."""
+        self._config.setValue("pasta_compartilhada_manual", "")
+        self._aviso_compartilhamento = False
+        self._atualizar_campo_pasta_compartilhada()
+        self._log("Pasta dos relatórios: detecção automática reativada.")
+
     def _sincronizar_compartilhamento(self, manual: bool = False) -> None:
-        """Copia os relatórios para a pasta 'departamento d.a' (VirtualBox)."""
+        """Copia os relatórios para a pasta escolhida ou a compartilhada."""
         if not manual and not self.campo_auto_compartilhamento.isChecked():
             return
-        copias, erro = sincronizar_relatorios(_pasta_relatorios())
+        destino_manual = self._pasta_compartilhada_manual()
+        copias, erro = sincronizar_relatorios(
+            _pasta_relatorios(), destino_manual
+        )
         if copias:
             mensagem = (
                 f"Compartilhamento: {len(copias)} relatório(s) copiado(s) — "
@@ -3365,17 +3529,25 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage(mensagem)
         if erro and not self._aviso_compartilhamento:
             self._aviso_compartilhamento = True
-            self._log(f"Compartilhamento — aviso: {erro}")
+            self._log(
+                f"Compartilhamento — aviso: {erro}. "
+                "Se a pasta automática não servir, use 'Escolher pasta…' "
+                "na aba Ambiente para informar outro diretório."
+            )
         if manual and hasattr(self, "campo_ambiente"):
             if copias:
                 texto = "Relatórios copiados:\n" + "\n".join(copias)
                 if erro:
                     texto += f"\n\nAviso: {erro}"
             elif erro:
-                texto = f"Não foi possível copiar: {erro}"
+                texto = (
+                    f"Não foi possível copiar: {erro}\n\n"
+                    "Use 'Escolher pasta…' na aba Ambiente para informar "
+                    "outro diretório."
+                )
             else:
                 texto = "Nenhum relatório novo para copiar."
-            self.campo_ambiente.append(texto)
+            self.campo_ambiente.appendPlainText(texto)
             QMessageBox.information(self, "Compartilhamento", texto)
 
     def _parar_por_esc(self) -> None:
@@ -4256,11 +4428,15 @@ class MainWindow(QMainWindow):
         for chave, titulo in (
             ("TOTAL", "Total"),
             ("VERIFICADO", "VERIFICADO"),
+            ("COBRÁVEL", "COBRÁVEL"),
             (STATUS_PENDENTE, "CLASSIFICADO — INDETERMINADO"),
+            ("NÃO COBRAR", "NÃO COBRAR"),
+            ("DUPLICADO — CONFERIR", "DUPLICADO — CONFERIR"),
             (STATUS_ERRO_CONSULTA, "ERRO DE CONSULTA"),
             ("DOCUMENTO INVÁLIDO", "DOCUMENTO INVÁLIDO"),
             ("NAO VERIFICADO", "NAO VERIFICADO"),
             ("ERRO", "ERRO"),
+            ("OUTROS", "OUTROS"),
         ):
             rotulo = QLabel(f"{titulo}: 0")
             rotulo.setWordWrap(True)
@@ -4288,8 +4464,10 @@ class MainWindow(QMainWindow):
             self.botao_revisao_completa.setEnabled(False)
         self.botao_revisar.setToolTip(
             "Reconsulta ERRO DE CONSULTA, DOCUMENTO INVÁLIDO e linhas que "
-            "ficaram sem resultado. Débitos já confirmados não voltam. "
-            "Para reconstruir tudo, use 'Revisão completa'."
+            "ficaram sem resultado. CPFs de código legado (000.000.xxx-xx) "
+            "também são enviados ao site; se ele rejeitar, a classificação "
+            "anterior é mantida e o aviso aparece no resumo. Débitos já "
+            "confirmados não voltam. Para reconstruir tudo, use 'Revisão completa'."
         )
         self.botao_revisar.clicked.connect(self.revisar)
         linha_resultados.addWidget(self.botao_revisar)
@@ -4373,7 +4551,7 @@ class MainWindow(QMainWindow):
         )
         self.campo_auto_compartilhamento.setToolTip(
             "Desmarque para apagar arquivos da pasta compartilhada sem que "
-            "o programa os recrie automaticamente. O botão abaixo continua "
+            "o programa os recrie automaticamente. Os botões abaixo continuam "
             "copiando manualmente quando você quiser."
         )
         self.campo_auto_compartilhamento.toggled.connect(
@@ -4381,12 +4559,36 @@ class MainWindow(QMainWindow):
         )
         ambiente_layout.addWidget(self.campo_auto_compartilhamento)
 
+        # Se a pasta compartilhada automática não for encontrada (ou não der
+        # para gravar nela), o usuário pode informar outro diretório aqui.
+        self.campo_pasta_compartilhada = QLineEdit()
+        self.campo_pasta_compartilhada.setReadOnly(True)
+        self.botao_escolher_pasta = QPushButton("Escolher pasta…")
+        self.botao_escolher_pasta.clicked.connect(
+            self._escolher_pasta_compartilhada
+        )
+        self.botao_pasta_automatica = QPushButton("Usar automática")
+        self.botao_pasta_automatica.clicked.connect(
+            self._usar_pasta_automatica
+        )
+        self.botao_pasta_automatica.setToolTip(
+            "Volta à detecção automática da pasta 'departamento d.a' do "
+            "VirtualBox, ignorando o caminho escolhido manualmente."
+        )
+        linha_pasta = QHBoxLayout()
+        linha_pasta.addWidget(QLabel("Pasta dos relatórios:"))
+        linha_pasta.addWidget(self.campo_pasta_compartilhada)
+        linha_pasta.addWidget(self.botao_escolher_pasta)
+        linha_pasta.addWidget(self.botao_pasta_automatica)
+        ambiente_layout.addLayout(linha_pasta)
+
         self.botao_compartilhamento = QPushButton(
             "Copiar relatórios ao compartilhamento"
         )
         self.botao_compartilhamento.setToolTip(
-            "Copia os relatórios para a raiz da pasta 'departamento d.a' "
-            "do VirtualBox"
+            "Copia os relatórios para a pasta escolhida em 'Pasta dos "
+            "relatórios' ou, se estiver no modo automático, para a raiz de "
+            "'departamento d.a' do VirtualBox"
         )
         self.botao_compartilhamento.clicked.connect(
             lambda _checked=False: self._sincronizar_compartilhamento(manual=True)
@@ -4404,6 +4606,7 @@ class MainWindow(QMainWindow):
             self.botao_instalar_navegador, self.botao_abrir_brave,
             self.botao_abrir_sistema, self.botao_atualizar_cookies,
             self.botao_compartilhamento,
+            self.botao_escolher_pasta, self.botao_pasta_automatica,
         ]
         if sys.platform.startswith("linux"):
             self.botao_guest_additions = QPushButton(
@@ -4423,6 +4626,7 @@ class MainWindow(QMainWindow):
         abas.currentChanged.connect(self._ao_mudar_aba_principal)
 
         self._atualizar_botao_umalinha()
+        self._atualizar_campo_pasta_compartilhada()
 
         # Tenta carregar automaticamente os cookies da sessão aberta no Brave.
         self.cookie_sessao = ""
@@ -5485,16 +5689,29 @@ class MainWindow(QMainWindow):
         cores = {
             "TOTAL": PALETA["acento_neutro"],
             "VERIFICADO": PALETA["acento_ok"],
+            "COBRÁVEL": PALETA["acento_ok"],
             STATUS_PENDENTE: PALETA["acento_atencao"],
+            "NÃO COBRAR": PALETA["acento_erro"],
+            "DUPLICADO — CONFERIR": PALETA["acento_atencao"],
             STATUS_ERRO_CONSULTA: PALETA["acento_erro"],
             "DOCUMENTO INVÁLIDO": PALETA["acento_neutro"],
             "NAO VERIFICADO": PALETA["acento_atencao"],
             "ERRO": PALETA["acento_erro"],
+            "OUTROS": PALETA["acento_neutro"],
         }
         titulos = {STATUS_PENDENTE: "CLASSIFICADO — INDETERMINADO"}
+        # Qualquer status novo importado de um relatório precisa aparecer
+        # no resumo: o contador OUTROS evita que linhas classificadas fiquem
+        # invisíveis só porque o painel não conhece o texto usado na planilha.
+        conhecidas = set(labels) - {"TOTAL", "OUTROS"}
+        outros = sum(
+            quantidade for status, quantidade in contagens.items()
+            if status not in conhecidas
+        )
         for chave, rotulo in labels.items():
             valor = (
                 len(self.resultados) if chave == "TOTAL"
+                else outros if chave == "OUTROS"
                 else contagens.get(chave, 0)
             )
             titulo = titulos.get(chave, chave if chave != "TOTAL" else "Total")
@@ -5691,6 +5908,7 @@ class MainWindow(QMainWindow):
             cookie_sessao=self.cookie_sessao,
             modo_revisao=True,
             incluir_pagos=True,
+            forcar_invalidos=True,
             sem_navegador=self.campo_sem_navegador.isChecked(),
             segundo_plano=self.campo_segundo_plano.isChecked(),
             pausa=max(0.5, self.campo_velocidade.value()),
@@ -5928,6 +6146,7 @@ class MainWindow(QMainWindow):
             resultados_iniciais=resultados_iniciais,
             modo_revisao=True,
             incluir_pagos=True,
+            forcar_invalidos=True,
             sem_navegador=self.campo_sem_navegador.isChecked(),
             segundo_plano=self.campo_segundo_plano.isChecked(),
             pausa=self.campo_velocidade.value(),
@@ -6180,6 +6399,7 @@ class MainWindow(QMainWindow):
             cookie_sessao=self.cookie_sessao,
             modo_revisao=True,
             incluir_pagos=True,
+            forcar_invalidos=True,
             sem_navegador=self.campo_sem_navegador.isChecked(),
             segundo_plano=self.campo_segundo_plano.isChecked(),
             pausa=self.campo_velocidade.value(),

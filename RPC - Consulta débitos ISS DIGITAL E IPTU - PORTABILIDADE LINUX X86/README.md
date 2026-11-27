@@ -40,6 +40,11 @@ Para usar outro caminho, ajuste `PASTA_COMPARTILHADA` em `config.py` ou defina
 a variável de ambiente de mesmo nome. Na aba **Ambiente**, o botão
 **Copiar relatórios ao compartilhamento** força a cópia na hora.
 
+Se a pasta automática falhar (não encontrada ou sem permissão), use
+**Escolher pasta…** na aba **Ambiente** para informar outro diretório: o
+caminho fica salvo e passa a ser usado tanto na cópia automática quanto na
+manual. **Usar automática** volta à detecção do VirtualBox.
+
 Se o compartilhamento estiver montado como `root:root` (sem permissão de
 escrita), rode `bash montar_compartilhamento.sh`. Ele remonta com o `uid/gid`
 do usuário e é executado automaticamente no login (autostart instalado em
@@ -326,6 +331,15 @@ branco:
 > observação, e boa parte deles não tem débito. Você pode parar com **ESC 2x**;
 > o progresso é salvo e um novo **Revisar** retoma exatamente os que ficaram
 > vazios na mesma aba. Para as outras abas, selecione cada uma e repita.
+
+> **CPFs do sistema legado** (`000.000.xxx-xx`) têm dígito verificador inválido.
+> No **Revisar** eles são enviados ao site mesmo assim: se o site rejeitar, a
+> classificação anterior é mantida e o resumo informa quantas consultas
+> forçadas falharam. Na consulta normal eles continuam sendo gravados como
+> `DOCUMENTO INVÁLIDO`. Para recuperar os débitos sem depender do site, use um
+> CSV de apoio `relatorio-lancamentos-debito-divida-ativa-*.csv` recente (até
+> 30 dias) na pasta do programa. A correção definitiva é substituir esses
+> códigos pelos CPFs reais na planilha.
 
 ### Gerar a cópia preenchida sem consultar o site
 

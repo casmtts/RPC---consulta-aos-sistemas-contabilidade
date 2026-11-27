@@ -8,6 +8,7 @@ consulta ao site e processamento em segundo plano.
 from __future__ import annotations
 
 import csv
+import os
 import random
 import re
 import shutil
@@ -2092,7 +2093,7 @@ class ConsultaWorker(QThread):
                  variar_pausa: bool = False, controle: dict | None = None,
                  documentos_ignorar: set[str] | None = None,
                  incluir_pagos: bool = False, segundo_plano: bool = False,
-                 parent=None):
+                 forcar_invalidos: bool = False, parent=None):
         super().__init__(parent)
         self.entrada = entrada
         self.aba = aba
@@ -2106,6 +2107,9 @@ class ConsultaWorker(QThread):
         self.modo_revisao = modo_revisao
         self.incluir_pagos = incluir_pagos
         self.segundo_plano = segundo_plano
+        # Quando True, a revisão tenta consultar no site mesmo documentos com
+        # dígito verificador inválido (códigos legados 000.000.xxx-xx).
+        self.forcar_invalidos = forcar_invalidos
         self.pausa = max(0.0, float(pausa))
         self.sem_navegador = sem_navegador
         self.variar_pausa = variar_pausa
@@ -2121,6 +2125,11 @@ class ConsultaWorker(QThread):
         self._bloqueio_sessao = False
         self._erros_consulta_total = 0
         self._site_instavel = False
+        # CPFs/CNPJs com dígito verificador inválido (códigos do sistema
+        # legado, ex.: 000.000.xxx-xx) não chegam a ser consultados. São
+        # contabilizados à parte para o resumo não dizer "0 OK, 0 com erro".
+        self._documentos_invalidos: list[str] = []
+        self._consultas_forcadas_falhas = 0
 
     def stop(self) -> None:
         self._parar = True
@@ -2323,6 +2332,27 @@ class ConsultaWorker(QThread):
             self.finalizado.emit("Consulta cancelada: " + aviso)
             return
 
+        if self.forcar_invalidos:
+            quantos_invalidos = sum(
+                1 for registro in self.registros
+                if not _documento_valido(
+                    (
+                        _campo(registro, "cpf") or _campo(registro, "cnpj")
+                        or _campo(registro, "documento") or _campo(registro, "cif")
+                    ),
+                    (
+                        _campo(registro, "tipo de pessoa")
+                        or _campo(registro, "tipo pessoa")
+                    ),
+                )
+            )
+            if quantos_invalidos:
+                self.aviso.emit(
+                    f"Revisão forçada: {quantos_invalidos} documento(s) com "
+                    "CPF/CNPJ inválido serão consultados mesmo assim — o site "
+                    "pode rejeitá-los."
+                )
+
         for indice, registro in enumerate(self.registros, start=1):
             if self._parar:
                 break
@@ -2381,9 +2411,11 @@ class ConsultaWorker(QThread):
             )
 
             # CPF/CNPJ com dígito verificador errado só gera erro-page no site
-            # (13445, 13446, 404...). Não adianta repetir: marca como não
-            # verificado e segue para o próximo, sem desperdiçar consultas.
-            if not _documento_valido(documento, tipo):
+            # (13445, 13446, 404...). Não adianta repetir: segue para o próximo
+            # sem desperdiçar consultas. Na revisão, nada é publicado quando
+            # não há débitos de apoio: publicar uma linha "DOCUMENTO INVÁLIDO"
+            # apagava o status original e as linhas duplicadas do mesmo CPF.
+            if not _documento_valido(documento, tipo) and not self.forcar_invalidos:
                 digitos = "".join(
                     caracter for caracter in documento if caracter.isdigit()
                 )
@@ -2408,20 +2440,23 @@ class ConsultaWorker(QThread):
                         }
                         for debito in antigos
                     ]
+                    self._publicar(documento, novos, indice_real)
                 else:
-                    novos = [{
-                        "Nome": nome, "CPF": documento,
-                        "Tipo de Débito": "-",
-                        "Competência": competencia_original or "-",
-                        "Valor (R$)": "0,00",
-                        "Status": "DOCUMENTO INVÁLIDO",
-                        "Erro": (
-                            "CPF/CNPJ inválido (dígito verificador) — "
-                            "conferir a planilha."
-                        ),
-                        "Situação (site)": "",
-                    }]
-                self._publicar(documento, novos, indice_real)
+                    self._documentos_invalidos.append(str(documento).strip())
+                    if not self.modo_revisao:
+                        novos = [{
+                            "Nome": nome, "CPF": documento,
+                            "Tipo de Débito": "-",
+                            "Competência": competencia_original or "-",
+                            "Valor (R$)": "0,00",
+                            "Status": "DOCUMENTO INVÁLIDO",
+                            "Erro": (
+                                "CPF/CNPJ inválido (dígito verificador) — "
+                                "conferir a planilha."
+                            ),
+                            "Situação (site)": "",
+                        }]
+                        self._publicar(documento, novos, indice_real)
                 if self.arquivo_progresso is not None:
                     salvar_progresso(
                         self.arquivo_progresso, indice_real, total, self.resultados,
@@ -2614,7 +2649,12 @@ class ConsultaWorker(QThread):
                 # resultado para este item e encerra o loop imediatamente.
                 break
             except (ConsultaNaoVerificada, ConsultaHttpNaoVerificada) as exc:
-                if not self._publicar_falha(
+                if self.forcar_invalidos and not _documento_valido(
+                        documento, tipo):
+                    # Código legado rejeitado pelo site: não publica nada,
+                    # para preservar o status e as duplicatas já importadas.
+                    self._consultas_forcadas_falhas += 1
+                elif not self._publicar_falha(
                     documento, nome, competencia_original, indice_real,
                     str(exc), registro,
                 ):
@@ -2630,7 +2670,12 @@ class ConsultaWorker(QThread):
                     }], indice_real)
                 if self._falha_rede_critica(str(exc)):
                     break
-                if self._registrar_erro_consulta():
+                # A rejeição de um código legado não é instabilidade do site:
+                # não pode encerrar a revisão forçada antes dos outros CPFs.
+                if not (
+                    self.forcar_invalidos
+                    and not _documento_valido(documento, tipo)
+                ) and self._registrar_erro_consulta():
                     self.aviso.emit(
                         "Site instável: 9 erros de consulta nesta rodada. "
                         "Encerrando para não gerar ERRO DE CONSULTA em massa; "
@@ -2655,7 +2700,12 @@ class ConsultaWorker(QThread):
                     )
                     break
             except Exception as exc:  # noqa: BLE001
-                if not self._publicar_falha(
+                if self.forcar_invalidos and not _documento_valido(
+                        documento, tipo):
+                    # Código legado rejeitado pelo site: não publica nada,
+                    # para preservar o status e as duplicatas já importadas.
+                    self._consultas_forcadas_falhas += 1
+                elif not self._publicar_falha(
                     documento, nome, competencia_original, indice_real,
                     str(exc), registro,
                 ):
@@ -2671,7 +2721,12 @@ class ConsultaWorker(QThread):
                     }], indice_real)
                 if self._falha_rede_critica(str(exc)):
                     break
-                if self._registrar_erro_consulta():
+                # A rejeição de um código legado não é instabilidade do site:
+                # não pode encerrar a revisão forçada antes dos outros CPFs.
+                if not (
+                    self.forcar_invalidos
+                    and not _documento_valido(documento, tipo)
+                ) and self._registrar_erro_consulta():
                     self.aviso.emit(
                         "Site instável: 9 erros de consulta nesta rodada. "
                         "Encerrando para não gerar ERRO DE CONSULTA em massa; "
@@ -2732,23 +2787,54 @@ class ConsultaWorker(QThread):
                 entrada=self.entrada, aba=self.aba, forcado=True,
             )
 
+        detalhe_invalidos = ""
+        if self._documentos_invalidos:
+            quantidade = len(self._documentos_invalidos)
+            exemplos = ", ".join(self._documentos_invalidos[:3])
+            self.aviso.emit(
+                f"{quantidade} documento(s) com CPF/CNPJ inválido (ex.: "
+                f"{exemplos}) não foram consultados — são códigos do sistema "
+                "legado que o site não aceita. Para recuperar os débitos, "
+                "coloque um CSV 'relatorio-lancamentos-debito-divida-ativa-*.csv' "
+                "recente na pasta ou corrija os CPFs na planilha."
+            )
+            detalhe_invalidos = (
+                f", {quantidade} documento(s) inválido(s) ignorado(s)"
+            )
+
+        detalhe_forcadas = ""
+        if self._consultas_forcadas_falhas:
+            quantidade = self._consultas_forcadas_falhas
+            self.aviso.emit(
+                f"{quantidade} consulta(s) forçada(s) falharam: o site "
+                "rejeitou os códigos legados. O status e as linhas já "
+                "classificadas foram mantidos; para resolver, informe os "
+                "CPFs reais na planilha."
+            )
+            detalhe_forcadas = (
+                f", {quantidade} consulta(s) forçada(s) falharam"
+            )
+
         if self._site_instavel:
-            self.finalizado.emit(
+            base = (
                 "Consulta encerrada: site instável (9 erros). Estabilize a "
-                "sessão/conexão e use 'Revisar' para refazer só os erros."
+                "sessão/conexão e use 'Revisar' para refazer só os erros"
             )
         elif self._bloqueio_sessao:
-            self.finalizado.emit(
+            base = (
                 "Consulta encerrada por BLOQUEIO DE SESSÃO — selecione o "
-                "contribuinte no Brave (depuração 9222) e rode novamente."
+                "contribuinte no Brave (depuração 9222) e rode novamente"
             )
         elif self._parar:
-            self.finalizado.emit(
+            base = (
                 f"Processamento interrompido: {ok} OK, {erros} com erro "
-                f"({processados}/{total} linhas processadas)."
+                f"({processados}/{total} linhas processadas)"
             )
         else:
-            self.finalizado.emit(f"Concluído: {ok} OK, {erros} com erro.")
+            base = f"Concluído: {ok} OK, {erros} com erro"
+        self.finalizado.emit(
+            base + detalhe_invalidos + detalhe_forcadas + "."
+        )
 
 
 # ============================================================
@@ -2984,6 +3070,9 @@ def _estilo_aplicacao() -> str:
         QLineEdit:focus, QComboBox:focus, QPlainTextEdit:focus, QDoubleSpinBox:focus, QSpinBox:focus {{
             border-color: {p["realce"]};
         }}
+        QDoubleSpinBox, QSpinBox {{
+            padding-right: 24px;
+        }}
         QTabWidget::pane {{
             border: 1px solid {p["borda"]};
             border-radius: 8px;
@@ -3094,24 +3183,39 @@ def _estilo_aplicacao() -> str:
             border: 1px solid {p["borda"]};
         }}
         QAbstractSpinBox::up-button {{
-            subcontrol-origin: border;
+            subcontrol-origin: padding;
             subcontrol-position: top right;
-            width: 17px;
+            width: 18px;
+            height: 14px;
             background: {p["aba_fundo"]};
             border: 1px solid {p["borda"]};
             border-radius: 0 5px 0 0;
         }}
         QAbstractSpinBox::down-button {{
-            subcontrol-origin: border;
+            subcontrol-origin: padding;
             subcontrol-position: bottom right;
-            width: 17px;
+            width: 18px;
+            height: 14px;
             background: {p["aba_fundo"]};
             border: 1px solid {p["borda"]};
             border-radius: 0 0 5px 0;
         }}
-        QAbstractSpinBox::up-arrow, QAbstractSpinBox::down-arrow {{
-            width: 8px;
-            height: 8px;
+        QAbstractSpinBox::up-button:hover, QAbstractSpinBox::down-button:hover {{
+            background: {p["realce"]};
+        }}
+        QAbstractSpinBox::up-arrow {{
+            width: 0px;
+            height: 0px;
+            border-left: 4px solid transparent;
+            border-right: 4px solid transparent;
+            border-bottom: 6px solid {p["texto"]};
+        }}
+        QAbstractSpinBox::down-arrow {{
+            width: 0px;
+            height: 0px;
+            border-left: 4px solid transparent;
+            border-right: 4px solid transparent;
+            border-top: 6px solid {p["texto"]};
         }}
     """
 
@@ -4199,11 +4303,15 @@ class MainWindow(QMainWindow):
         for chave, titulo in (
             ("TOTAL", "Total"),
             ("VERIFICADO", "VERIFICADO"),
+            ("COBRÁVEL", "COBRÁVEL"),
             (STATUS_PENDENTE, "CLASSIFICADO — INDETERMINADO"),
+            ("NÃO COBRAR", "NÃO COBRAR"),
+            ("DUPLICADO — CONFERIR", "DUPLICADO — CONFERIR"),
             (STATUS_ERRO_CONSULTA, "ERRO DE CONSULTA"),
             ("DOCUMENTO INVÁLIDO", "DOCUMENTO INVÁLIDO"),
             ("NAO VERIFICADO", "NAO VERIFICADO"),
             ("ERRO", "ERRO"),
+            ("OUTROS", "OUTROS"),
         ):
             rotulo = QLabel(f"{titulo}: 0")
             rotulo.setWordWrap(True)
@@ -4231,8 +4339,10 @@ class MainWindow(QMainWindow):
             self.botao_revisao_completa.setEnabled(False)
         self.botao_revisar.setToolTip(
             "Reconsulta ERRO DE CONSULTA, DOCUMENTO INVÁLIDO e linhas que "
-            "ficaram sem resultado. Débitos já confirmados não voltam. "
-            "Para reconstruir tudo, use 'Revisão completa'."
+            "ficaram sem resultado. CPFs de código legado (000.000.xxx-xx) "
+            "também são enviados ao site; se ele rejeitar, a classificação "
+            "anterior é mantida e o aviso aparece no resumo. Débitos já "
+            "confirmados não voltam. Para reconstruir tudo, use 'Revisão completa'."
         )
         self.botao_revisar.clicked.connect(self.revisar)
         linha_resultados.addWidget(self.botao_revisar)
@@ -5400,16 +5510,29 @@ class MainWindow(QMainWindow):
         cores = {
             "TOTAL": PALETA["acento_neutro"],
             "VERIFICADO": PALETA["acento_ok"],
+            "COBRÁVEL": PALETA["acento_ok"],
             STATUS_PENDENTE: PALETA["acento_atencao"],
+            "NÃO COBRAR": PALETA["acento_erro"],
+            "DUPLICADO — CONFERIR": PALETA["acento_atencao"],
             STATUS_ERRO_CONSULTA: PALETA["acento_erro"],
             "DOCUMENTO INVÁLIDO": PALETA["acento_neutro"],
             "NAO VERIFICADO": PALETA["acento_atencao"],
             "ERRO": PALETA["acento_erro"],
+            "OUTROS": PALETA["acento_neutro"],
         }
         titulos = {STATUS_PENDENTE: "CLASSIFICADO — INDETERMINADO"}
+        # Qualquer status novo importado de um relatório precisa aparecer
+        # no resumo: o contador OUTROS evita que linhas classificadas fiquem
+        # invisíveis só porque o painel não conhece o texto usado na planilha.
+        conhecidas = set(labels) - {"TOTAL", "OUTROS"}
+        outros = sum(
+            quantidade for status, quantidade in contagens.items()
+            if status not in conhecidas
+        )
         for chave, rotulo in labels.items():
             valor = (
                 len(self.resultados) if chave == "TOTAL"
+                else outros if chave == "OUTROS"
                 else contagens.get(chave, 0)
             )
             titulo = titulos.get(chave, chave if chave != "TOTAL" else "Total")
@@ -5606,6 +5729,7 @@ class MainWindow(QMainWindow):
             cookie_sessao=self.cookie_sessao,
             modo_revisao=True,
             incluir_pagos=True,
+            forcar_invalidos=True,
             sem_navegador=self.campo_sem_navegador.isChecked(),
             segundo_plano=self.campo_segundo_plano.isChecked(),
             pausa=max(0.5, self.campo_velocidade.value()),
@@ -5843,6 +5967,7 @@ class MainWindow(QMainWindow):
             resultados_iniciais=resultados_iniciais,
             modo_revisao=True,
             incluir_pagos=True,
+            forcar_invalidos=True,
             sem_navegador=self.campo_sem_navegador.isChecked(),
             segundo_plano=self.campo_segundo_plano.isChecked(),
             pausa=self.campo_velocidade.value(),
@@ -6095,6 +6220,7 @@ class MainWindow(QMainWindow):
             cookie_sessao=self.cookie_sessao,
             modo_revisao=True,
             incluir_pagos=True,
+            forcar_invalidos=True,
             sem_navegador=self.campo_sem_navegador.isChecked(),
             segundo_plano=self.campo_segundo_plano.isChecked(),
             pausa=self.campo_velocidade.value(),
