@@ -924,6 +924,31 @@ def _campo(registro: dict, nome: str) -> str:
     return ""
 
 
+def _chave_debito(item: dict) -> tuple:
+    """Chave da dívida, para publicar cada débito uma única vez.
+
+    O ID Dívida é a chave segura. Sem ID, usa tipo + competência + valor +
+    CIF + vencimento dentro do mesmo documento. Assim a mesma dívida
+    consultada mais de uma vez (CPF repetido na planilha, tabela duplicada
+    na página) não vira "DUPLICADO — CONFERIR".
+    """
+    documento = re.sub(
+        r"\D", "",
+        str(item.get("CPF", "") or item.get("CNPJ", "") or item.get("Documento", "") or ""),
+    )
+    id_divida = str(item.get("ID Dívida", "") or "").strip()
+    if id_divida and id_divida != "-":
+        return ("id", documento, id_divida)
+    return (
+        "campos", documento,
+        str(item.get("Tipo de Débito", "") or "").strip(),
+        str(item.get("Competência", "") or "").strip(),
+        str(item.get("Valor (R$)", "") or "").strip(),
+        str(item.get("CIF", "") or "").strip(),
+        str(item.get("Vencimento", "") or "").strip(),
+    )
+
+
 def _indice_coluna(cabecalho: list[str], nome: str) -> int | None:
     """Índice da coluna pelo nome, ignorando acentos e maiúsculas."""
     alvo = _sem_acento(nome)
@@ -2144,6 +2169,18 @@ class ConsultaWorker(QThread):
             # Marca a linha da planilha de origem. Usado na retomada para
             # descartar resultados do último item que será refeito.
             item["_indice"] = indice
+        # Publica cada dívida uma única vez. O CPF pode estar em várias
+        # linhas da planilha e o site pode repetir a linha na página: sem
+        # isso a mesma dívida viraria "DUPLICADO — CONFERIR" sem motivo.
+        vistos: set[tuple] = set()
+        unicos: list[dict] = []
+        for item in novos:
+            chave = _chave_debito(item)
+            if chave in vistos:
+                continue
+            vistos.add(chave)
+            unicos.append(item)
+        novos = unicos
         if self.modo_revisao:
             # Na revisão, substituir as linhas antigas do mesmo CPF.
             self.documento_revisado.emit(documento, novos)
