@@ -132,6 +132,12 @@ def formatar_parcial(ws, linhas: list[dict]) -> None:
             status = STATUS_ERRO_CONSULTA
             motivo = erro
             cor = VERMELHO
+        elif sem_acento(item.get("Tipo de Débito", "")).startswith("sem debitos"):
+            # Consulta concluída sem débitos: não é cobrança e também não é
+            # pendência. Volta a ser NÃO COBRAR, em vermelho, como antes.
+            status = "NÃO COBRAR"
+            motivo = "Verificado: sem registros no site para o débito informado."
+            cor = VERMELHO
         elif duplicado:
             status = "DUPLICADO — CONFERIR"
             motivo = "Débito aparenta ser duplicado — conferir antes de cobrar."
