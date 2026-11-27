@@ -447,12 +447,17 @@ Colunas usadas (nome ignorando acentos/maiúsculas):
 ## Saída
 
 Colunas: Nome, CPF, Tipo de Débito, Competência, Valor (R$), Status, **CIF**,
-**ID Dívida**, **Vencimento** e Erro. Assim dá para saber, por exemplo, qual
-CIF (imóvel) está devendo IPTU.
+**ID Dívida**, **Vencimento**, Erro e **MOTIVO**. Assim dá para saber, por
+exemplo, qual CIF (imóvel) está devendo IPTU.
 
-Status possíveis: `OK`, `NAO VERIFICADO` e `ERRO`. O programa só afirma
-"Sem débitos" quando a pesquisa foi realmente executada; na
-menor dúvida ele marca `NAO VERIFICADO` para não gerar falso negativo.
+Todo XLSX gerado (inclusive os arquivos com data/hora) já sai com o **Status
+classificado e colorido** — `COBRÁVEL` (verde), `NÃO COBRAR` (vermelho),
+`CLASSIFICADO — INDETERMINADO` (laranja), `DUPLICADO — CONFERIR` (amarelo) ou
+`ERRO DE CONSULTA` — e com a coluna **MOTIVO** explicando cada classificação.
+
+Internamente a consulta usa `OK`, `VERIFICADO`, `NAO VERIFICADO` e `ERRO`. O
+programa só afirma "Sem débitos" quando a pesquisa foi realmente executada;
+na menor dúvida ele marca `NAO VERIFICADO` para não gerar falso negativo.
 
 ## Retomada de consultas interrompidas
 

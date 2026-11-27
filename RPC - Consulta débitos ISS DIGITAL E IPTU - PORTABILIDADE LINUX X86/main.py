@@ -817,15 +817,15 @@ def gravar_planilha(caminho: str, linhas: list[dict]) -> Path:
         for indice, largura in enumerate(larguras, start=1):
             ws.column_dimensions[get_column_letter(indice)].width = largura
 
-        # O relatório parcial é a lista de trabalho do gestor: já sai com
-        # Status colorido, MOTIVO e duplicatas destacadas, para uma regravação
-        # pelo programa não desfazer essa classificação.
-        if "resultado_parcial" in caminho.name:
-            try:
-                from formatar_parcial import formatar_parcial
-                formatar_parcial(ws, linhas)
-            except Exception:  # noqa: BLE001
-                pass
+        # Lista de trabalho do gestor: Status colorido, MOTIVO e duplicatas
+        # destacadas. Aplica-se a TODO XLSX gerado (inclusive os arquivos com
+        # data/hora), para que a conclusão da consulta não perca a formatação
+        # que antes só aparecia no relatório parcial.
+        try:
+            from formatar_parcial import formatar_parcial
+            formatar_parcial(ws, linhas)
+        except Exception:  # noqa: BLE001
+            pass
         adicionar_aviso(wb)
         wb.save(caminho)
     else:
@@ -3386,6 +3386,15 @@ class MainWindow(QMainWindow):
         self._destino_auto_parcial: Path | None = None
         self.config_worker: QThread | None = None
         self._config = QSettings("ConsultaDebitos", "ConsultaDebitos")
+        # Migração única: a cópia automática recriava na pasta compartilhada
+        # os arquivos que o usuário apagava. Desliga uma vez; depois o usuário
+        # pode voltar a ativar pela aba Ambiente, se quiser.
+        if not _config_bool(
+            self._config, "auto_compartilhamento_desativado", False
+        ):
+            self._config.setValue("auto_compartilhamento", False)
+            self._config.setValue("auto_compartilhamento_desativado", True)
+            self._config.sync()
         self.gerar_umalinha = _config_bool(
             self._config, "gerar_umalinha", True
         )
@@ -4547,12 +4556,13 @@ class MainWindow(QMainWindow):
             "Copiar automaticamente para a pasta compartilhada"
         )
         self.campo_auto_compartilhamento.setChecked(
-            self._config.value("auto_compartilhamento", True, type=bool)
+            _config_bool(self._config, "auto_compartilhamento", False)
         )
         self.campo_auto_compartilhamento.setToolTip(
-            "Desmarque para apagar arquivos da pasta compartilhada sem que "
-            "o programa os recrie automaticamente. Os botões abaixo continuam "
-            "copiando manualmente quando você quiser."
+            "Desligado por padrão. Se ligar, os relatórios são copiados a cada "
+            "5 segundos e os arquivos que você apagar da pasta compartilhada "
+            "voltam a ser recriados. Os botões abaixo continuam copiando "
+            "manualmente quando você quiser."
         )
         self.campo_auto_compartilhamento.toggled.connect(
             self._alternar_auto_compartilhamento
