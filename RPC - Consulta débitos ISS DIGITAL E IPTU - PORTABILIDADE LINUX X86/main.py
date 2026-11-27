@@ -925,6 +925,29 @@ def _campo(registro: dict, nome: str) -> str:
     return ""
 
 
+def _dedup_registros(registros: list[dict]) -> tuple[list[dict], int]:
+    """Mantém só a primeira linha de cada CPF/CNPJ.
+
+    A planilha de entrada pode repetir o mesmo documento em várias linhas
+    (ex.: o mesmo CPF em 5 guias). Sem isso, cada linha gera uma consulta
+    completa e os débitos são publicados várias vezes.
+    """
+    vistos: set[str] = set()
+    unicos: list[dict] = []
+    for registro in registros:
+        documento = (
+            _campo(registro, "cpf") or _campo(registro, "cnpj")
+            or _campo(registro, "documento") or _campo(registro, "cif")
+        ).strip()
+        digitos = re.sub(r"\D", "", documento)
+        if digitos and len(digitos) in (11, 14):
+            if digitos in vistos:
+                continue
+            vistos.add(digitos)
+        unicos.append(registro)
+    return unicos, len(registros) - len(unicos)
+
+
 def _indice_coluna(cabecalho: list[str], nome: str) -> int | None:
     """Índice da coluna pelo nome, ignorando acentos e maiúsculas."""
     alvo = _sem_acento(nome)
@@ -5158,9 +5181,15 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Planilha vazia", "Nenhuma linha com dados foi encontrada.")
             return
 
+        registros, repetidos = _dedup_registros(registros)
         self.cabecalho = cabecalho
         self.registros = registros
         self.resultados = []
+        if repetidos:
+            self._log(
+                f"{repetidos} linha(s) com CPF/CNPJ repetido ignorada(s) "
+                "— cada documento é consultado uma única vez."
+            )
         self.label_contagem.setText(f"{len(registros)} registro(s) carregado(s)")
         self._preencher_tabela(self.tabela_entrada, cabecalho, registros)
         self.botao_executar.setEnabled(True)
@@ -5372,6 +5401,21 @@ class MainWindow(QMainWindow):
             if reconstruido is not None:
                 progresso = reconstruido
         entrada = str(self.caminho_entrada) if self.caminho_entrada else ""
+        # Progresso gravado antes da deduplicação aponta para índices da
+        # planilha com documentos repetidos; não pode ser reaproveitado.
+        if (
+            progresso
+            and int(progresso.get("total") or 0) != len(self.registros)
+        ):
+            salvar_progresso(
+                arquivo_progresso, 0, len(self.registros), [],
+                entrada=entrada, aba=aba, forcado=True,
+            )
+            self._log(
+                "Progresso anterior descartado: a planilha tinha CPFs "
+                "repetidos e os índices mudaram."
+            )
+            progresso = None
         if progresso and _tem_trabalho(progresso) and \
                 int(progresso.get("processados") or 0) < len(self.registros):
             processados = int(progresso.get("processados") or 0)
