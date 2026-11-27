@@ -26,7 +26,8 @@ NOME_LEGENDA = "LEGENDA"
 
 ITENS_LEGENDA = (
     ("COR / DESTAQUE", "SIGNIFICADO", "O QUE O ANALISTA DEVE FAZER"),
-    ("COBRÁVEL", "Verde: dívida viva confirmada no site, com valor em aberto",
+    ("COBRÁVEL",
+     "Verde: débito em aberto confirmado no site, sem pagamento informado",
      "Conferir no sistema oficial antes de qualquer cobrança"),
     ("ERRO DE CONSULTA",
      "Vermelho: a consulta não foi concluída (sessão/site/resposta duvidosa)",

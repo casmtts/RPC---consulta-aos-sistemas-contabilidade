@@ -30,8 +30,9 @@ def mensagem_amigavel_erro(texto: object) -> str:
     return original
 
 
-# "COBRÁVEL" é gravado por formatar_parcial() quando o site confirma dívida
-# viva, com valor devido positivo e sem pagamento/encerramento. Também é um
+# "COBRÁVEL" é gravado por formatar_parcial() quando o site confirma débito
+# em aberto, com valor devido positivo e sem pagamento/encerramento. Também
+# é um
 # débito confirmado: precisa continuar alimentando a OBSERVAÇÃO quando a
 # planilha de resultados já sai classificada (com Status colorido e MOTIVO).
 STATUS_CONFIRMADOS = ("OK", "VERIFICADO", "COBRÁVEL")

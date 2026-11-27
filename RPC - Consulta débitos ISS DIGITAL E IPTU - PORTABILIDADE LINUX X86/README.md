@@ -139,7 +139,7 @@ tipo + competência. A saída tem duas colunas:
 | Coluna | Valores |
 |--------|---------|
 | `PAGO?` | `PAGO`, `EM ABERTO`, `CANCELADO`, `PRESCRITO`, `NÃO CONFIRMADO`, `NÃO VERIFICADO` |
-| `COBRÁVEL?` | `SIM` (dívida viva), `NÃO` (paga/cancelada/prescrita/remida), `NÃO CONFIRMADO` |
+| `COBRÁVEL?` | `SIM` (débito em aberto), `NÃO` (paga/cancelada/prescrita/remida), `NÃO CONFIRMADO` |
 | `SITUAÇÃO (SITE)` | Situação informada pelo site para cada débito: `DÉBITO`, `AJUIZADO`, `PAGO MANUAL`, `CANCELADO`, etc. |
 | `NÍVEL DE ALERTA` | Cor de alerta da cobrança (verde/laranja/amarelo/vermelho), explicada abaixo |
 
@@ -173,7 +173,7 @@ Nunca é atribuída situação "por chute": sem correspondência exata de tipo e
 competência, o débito fica `NÃO CONFIRMADO`.
 
 **Regra de segurança contra cobrança indevida:** `COBRÁVEL? = SIM` só aparece
-para situação explicitamente de dívida viva (débito, dívida ativa, ajuizado,
+para situação explicitamente de débito em aberto (débito, dívida ativa, ajuizado,
 consolidado, parcelado). Todas as formas de pagamento/encerramento são
 tratadas como `NÃO`: `PAGO`, `PAGO MANUAL`, `PAGO PARCELAMENTO`, `PAGO POR
 COMPENSAÇÃO`, `PAGO POR DAÇÃO`, `PAGO RESTITUIDO`, `AJUIZADO PAGO`, `DÍVIDA

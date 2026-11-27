@@ -161,14 +161,14 @@ def formatar_parcial(ws, linhas: list[dict]) -> None:
                 )
             cor = VERMELHO
         elif cobravel == "SIM":
-            # Dívida viva confirmada no site, com valor devido e SEM
+            # Débito em aberto confirmado no site, com valor devido e SEM
             # comprovante de pagamento. Não exigir sequência de IPTU nem
             # classificação verde anterior: o que mata a cobrança é haver
             # prova de pagamento/encerramento, tratada no ramo acima.
             status = "COBRÁVEL"
             motivo = (
-                "Débito confirmado como dívida viva; o site não informou "
-                "pagamento/encerramento."
+                "Débito em aberto confirmado no site; sem pagamento "
+                "informado."
             )
             cor = VERDE
         else:

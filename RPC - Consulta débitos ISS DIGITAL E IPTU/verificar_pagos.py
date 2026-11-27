@@ -58,14 +58,14 @@ SITUACOES_ENCERRADAS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("PAGO", ("pago", "paga", "quitad", "remid", "baixad")),
     # "RETIDO_DENTRO_MUNICIPIO_DEBITO" contém "debito", mas o tributo foi
     # retido na fonte: cobrar o contribuinte seria indevido. "retido" vem
-    # ANTES das situações de dívida viva.
+    # ANTES das situações de débito em aberto.
     ("RETIDO", ("retido",)),
     ("CANCELADO", ("cancelad", "anulad", "extint")),
     ("SUBSTITUÍDO", ("substituid",)),
     ("SUSPENSO", ("suspens",)),
     ("ISENTO", ("isent", "imun", "nao tributavel")),
 )
-# Somente estas mantêm a dívida viva — o gestor PODE cobrar.
+# Somente estas mantêm o débito em aberto — o gestor PODE cobrar.
 # Tudo o mais (parcelamento revertido/descumprido, boleto gerado, em
 # fiscalização, lançamento em AINF...) fica NÃO CONFIRMADO: na dúvida,
 # nunca virar cobrança.
@@ -383,7 +383,7 @@ def classificar_situacao(situacao: object, pago_valor: float = 0.0,
     """Devolve ``(PAGO?, COBRÁVEL?)`` para a situação informada pelo site.
 
     Regra de ouro contra cobrança indevida: só devolve ``SIM`` quando a
-    situação é explicitamente de dívida viva. Qualquer pagamento (inclusive
+    situação é explicitamente de débito em aberto. Qualquer pagamento (inclusive
     PAGO MANUAL, PAGO POR COMPENSAÇÃO/DAÇÃO, AJUIZADO PAGO, DÍVIDA ATIVA
     PAGA), prescrição, cancelamento, isenção, imunidade ou suspensão
     encerra a exigibilidade. Situação desconhecida nunca vira cobrança.
