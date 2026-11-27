@@ -1,7 +1,8 @@
-"""Formatação final do relatório parcial: Status, MOTIVO e duplicatas.
+"""Formatação final do relatório: Status, MOTIVO e duplicatas.
 
-Chamado por ``gravar_planilha`` quando o destino é ``*_resultado_parcial.xlsx``,
-para que uma regravação pelo programa não desfaça a classificação feita.
+Chamado por ``gravar_planilha`` para todo XLSX gerado, inclusive os arquivos
+com data/hora, para que a conclusão da consulta também saia com o Status
+classificado (COBRÁVEL / NÃO COBRAR / INDETERMINADO) e a coluna MOTIVO.
 """
 
 from __future__ import annotations
@@ -176,8 +177,11 @@ def formatar_parcial(ws, linhas: list[dict]) -> None:
         if pessoa != pessoa_atual:
             pessoa_atual = pessoa
             indice_pessoa += 1
+        # Consulta com erro não é duplicata: nunca pintar a linha inteira de
+        # amarelo. O destaque de duplicado vale apenas para débitos sem erro,
+        # já que a classificação acima prioriza ERRO DE CONSULTA.
         fundo = (
-            DUPLICADO if duplicado else PatternFill(
+            DUPLICADO if duplicado and not erro else PatternFill(
                 "solid", start_color=ZEBRA[indice_pessoa % 2],
                 end_color=ZEBRA[indice_pessoa % 2],
             )

@@ -816,15 +816,15 @@ def gravar_planilha(caminho: str, linhas: list[dict]) -> Path:
         for indice, largura in enumerate(larguras, start=1):
             ws.column_dimensions[get_column_letter(indice)].width = largura
 
-        # O relatório parcial é a lista de trabalho do gestor: já sai com
-        # Status colorido, MOTIVO e duplicatas destacadas, para uma regravação
-        # pelo programa não desfazer essa classificação.
-        if "resultado_parcial" in caminho.name:
-            try:
-                from formatar_parcial import formatar_parcial
-                formatar_parcial(ws, linhas)
-            except Exception:  # noqa: BLE001
-                pass
+        # Lista de trabalho do gestor: Status colorido, MOTIVO e duplicatas
+        # destacadas. Aplica-se a TODO XLSX gerado (inclusive os arquivos com
+        # data/hora), para que a conclusão da consulta não perca a formatação
+        # que antes só aparecia no relatório parcial.
+        try:
+            from formatar_parcial import formatar_parcial
+            formatar_parcial(ws, linhas)
+        except Exception:  # noqa: BLE001
+            pass
         adicionar_aviso(wb)
         wb.save(caminho)
     else:
