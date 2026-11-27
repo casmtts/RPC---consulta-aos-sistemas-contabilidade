@@ -743,16 +743,7 @@ def gravar_planilha(caminho: str, linhas: list[dict]) -> Path:
         item for item in linhas
         if len(re.sub(r"\D", "", str(item.get("CPF", "")))) != 14
     ]
-    # Cada dívida aparece uma única vez, agrupada com as demais da pessoa.
-    vistos: set[tuple] = set()
-    unicas: list[dict] = []
-    for item in linhas:
-        chave = _chave_debito(item)
-        if chave in vistos:
-            continue
-        vistos.add(chave)
-        unicas.append(item)
-    linhas = _ordenar_resultados(unicas)
+    linhas = _ordenar_resultados(linhas)
     caminho = Path(caminho)
     if caminho.suffix.lower() in (".xlsx", ".xlsm"):
         from openpyxl import Workbook
@@ -931,30 +922,6 @@ def _campo(registro: dict, nome: str) -> str:
         if alvo in _sem_acento(chave):
             return str(valor).strip()
     return ""
-
-
-def _chave_debito(item: dict) -> tuple:
-    """Chave que identifica uma dívida já listada, para não repeti-la.
-
-    O ID Dívida é a chave segura. Quando o site não informa o ID (linhas
-    "Sem débitos verificados", por exemplo), usa tipo + competência +
-    valor + CIF + vencimento dentro do mesmo documento.
-    """
-    documento = re.sub(
-        r"\D", "",
-        str(item.get("CPF", "") or item.get("CNPJ", "") or item.get("Documento", "") or ""),
-    )
-    id_divida = str(item.get("ID Dívida", "") or "").strip()
-    if id_divida and id_divida != "-":
-        return ("id", documento, id_divida)
-    return (
-        "campos", documento,
-        str(item.get("Tipo de Débito", "") or "").strip(),
-        str(item.get("Competência", "") or "").strip(),
-        str(item.get("Valor (R$)", "") or "").strip(),
-        str(item.get("CIF", "") or "").strip(),
-        str(item.get("Vencimento", "") or "").strip(),
-    )
 
 
 def _dedup_registros(registros: list[dict]) -> tuple[list[dict], int]:
@@ -2200,17 +2167,6 @@ class ConsultaWorker(QThread):
             # Marca a linha da planilha de origem. Usado na retomada para
             # descartar resultados do último item que será refeito.
             item["_indice"] = indice
-        # Cada dívida entra uma única vez, mesmo que o site repita a linha
-        # (tabelas duplicadas na página) ou o documento seja revisitado.
-        vistos: set[tuple] = set()
-        unicos: list[dict] = []
-        for item in novos:
-            chave = _chave_debito(item)
-            if chave in vistos:
-                continue
-            vistos.add(chave)
-            unicos.append(item)
-        novos = unicos
         if self.modo_revisao:
             # Na revisão, substituir as linhas antigas do mesmo CPF.
             self.documento_revisado.emit(documento, novos)
